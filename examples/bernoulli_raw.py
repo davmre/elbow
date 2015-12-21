@@ -23,11 +23,11 @@ class BernoulliModel(object):
             theta, theta_log_jacobian = bf.transforms.logit(transformed_theta)
             theta_prior = bf.dists.beta_log_density(theta, alpha=1, beta=1) + theta_log_jacobian
 
-            data_lik = bf.dists.bernoulli_log_density(self.data, theta)
+            data_lik = tf.reduce_sum(bf.dists.bernoulli_log_density(self.data, theta))
             joint_density = data_lik + theta_prior
         
             self.elbo = self.elbo + 1.0/n_eps * joint_density
-        
+
 bernoulli_data = (0,1,0,0,0,0,0,0,0,1)
 N = len(bernoulli_data)
 

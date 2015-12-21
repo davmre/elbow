@@ -39,8 +39,8 @@ class VariationalAutoEncoder(object):
         self.batch_eps = tf.placeholder(tf.float32, shape=(batch_size, d_z))
 
         w_encode_h3 = init_weights(d_x, d_hidden)
-        w_encode_h4 = init_weights(d_hidden, 2)
-        w_encode_h5 = init_weights(d_hidden, 2)
+        w_encode_h4 = init_weights(d_hidden, d_z)
+        w_encode_h5 = init_weights(d_hidden, d_z)
         b_encode_3 = init_zero_vector(d_hidden)
         b_encode_4 = init_zero_vector(d_z)
         b_encode_5 = init_zero_vector(d_z)
@@ -67,7 +67,7 @@ class VariationalAutoEncoder(object):
 
 def train(seed=3):
     batch_size=128
-    d_z = 2
+    d_z = 20
 
     np.random.seed(seed)
     
@@ -78,15 +78,16 @@ def train(seed=3):
     bigeps = np.random.randn(len(Xtrain), d_z)
     Xtest = Xdata[60000:70000]
 
-    vae = VariationalAutoEncoder(batch_size=None)
+    vae = VariationalAutoEncoder(batch_size=None, d_z=20)
 
-    train_step = tf.train.AdamOptimizer(0.005).minimize(-vae.elbo)
+    train_step = tf.train.AdamOptimizer(0.001).minimize(-vae.elbo)
+    #train_step = tf.train.AdaGradOptimizer(0.01).minimize(-vae.elbo)
     init = tf.initialize_all_variables()
 
     sess = tf.Session()
     sess.run(init)
 
-    for i_epoch in xrange(100):
+    for i_epoch in xrange(200):
         tstart = time.time()
         bigeps = np.random.randn(len(Xtrain), d_z)
         for start in xrange(0, Xtrain.shape[0], batch_size):
@@ -110,16 +111,15 @@ def train(seed=3):
             pickle.dump(w, f)
 
 def visualize():
-    vae = VariationalAutoEncoder(batch_size=1)
+    vae = VariationalAutoEncoder(batch_size=None)
     init = tf.initialize_all_variables()
     sess = tf.Session()
     sess.run(init)
 
-    images = []
-    image_zs = []
     for i_epoch in range(100):
 
-        weights_file = "/Users/dmoore/Dropbox/projects/vae/weights_%d.pkl" % i_epoch
+        #weights_file = "/Users/dmoore/Dropbox/projects/vae/weights_%d.pkl" % i_epoch
+        weights_file = "weights_%d.pkl" % i_epoch
         with open(weights_file, 'rb') as f:
              w = pickle.load(f)
 
@@ -129,6 +129,8 @@ def visualize():
             feed_dict[p] = val
 
         zs = np.linspace(-3, 3, 10)
+        images = []
+        image_zs = []
         for i in range(10):
             for j in range(10):
                 zz = np.array((zs[i], zs[j])).reshape(1, 2)
