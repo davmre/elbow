@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from bayesflow.special_hacks import gammaln
+from bayesflow.special_hacks import gammaln, betaln
 import scipy.special
 
 def _get_vector_dimension(*args):
@@ -197,16 +197,15 @@ def gamma_log_density(x, alpha, beta, parameterization=None):
     return lp
 
 def beta_log_density(x, alpha=1.0, beta=1.0):
-    log_z = scipy.special.betaln(alpha, beta)
+    log_z = betaln(alpha, beta)
     log_density = (alpha - 1) * tf.log(x) + (beta-1) * tf.log(1-x) - log_z
-    return tf.reduce_sum(log_density)
+    return log_density
 
 def bernoulli_log_density(x, p):
 
     lp = tf.log(p)
     lp1 = tf.log(1-p)
     log_probs = tf.mul(x, lp) + tf.mul(1-x, lp1)
-    #import pdb; pdb.set_trace()
     return log_probs
     
 
