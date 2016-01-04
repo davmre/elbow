@@ -62,8 +62,6 @@ def gaussian_entropy(stddev=None, variance=None):
     if variance is None:
         variance = stddev*stddev
 
-    d = _get_vector_dimension(variance)
-
     t = .5 * (1 + np.log(2*np.pi) + tf.log(variance))
     entropy = tf.reduce_sum(t)
     return entropy
@@ -201,10 +199,17 @@ def beta_log_density(x, alpha=1.0, beta=1.0):
     log_density = (alpha - 1) * tf.log(x) + (beta-1) * tf.log(1-x) - log_z
     return log_density
 
-def bernoulli_log_density(x, p):
+def bernoulli_log_density(x, p, clip_finite=True):
 
-    lp = tf.log(p)
-    lp1 = tf.log(1-p)
+    if clip_finite:
+        # avoid taking log(0) for float32 inputs
+        # TODO: adapt to float64, etc. 
+        lp = tf.log(tf.clip_by_value(p, 1e-45, 1.0), name="bernoulli_logp")
+        lp1 = tf.log(tf.clip_by_value(1.0-p, 1e-45, 1.0), name="bernoulli_log1p")
+    else:
+        lp = tf.log(p, name="bernoulli_logp")
+        lp1 = tf.log(1.0-p, name="bernoulli_log1p")
+        
     log_probs = tf.mul(x, lp) + tf.mul(1-x, lp1)
     return log_probs
     
