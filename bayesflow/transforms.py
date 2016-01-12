@@ -4,7 +4,7 @@ import tensorflow as tf
 def logit(x, clip_finite=True):
     if isinstance(x, tf.Tensor):
         if clip_finite:
-            x = tf.clip_by_value(x, -45, 45, name="clipped_logit_input")
+            x = tf.clip_by_value(x, -88, 88, name="clipped_logit_input")
         transformed = 1.0 / (1 + tf.exp(-x))
         jacobian = transformed * (1-transformed)
         if clip_finite:
@@ -17,6 +17,18 @@ def logit(x, clip_finite=True):
         log_jacobian = np.sum(np.log(jacobian))
 
     return transformed, log_jacobian
+
+def exp(x, clip_finite=True):
+    if isinstance(x, tf.Tensor):
+        transformed = tf.exp(x)
+        if clip_finite:
+            x = tf.clip_by_value(x, -88, 88, name="clipped_exp_input")
+        log_jacobian = tf.reduce_sum(x)
+    else:
+        transformed = np.exp(x)
+        log_jacobian = np.sum(x)
+    return transformed, log_jacobian
+
 
 def square(x):
     transformed = x * x
@@ -37,11 +49,18 @@ def sqrt(x):
         log_jacobian = np.sum(np.log(jacobian))
     return transformed, log_jacobian
 
-def reciprocal(x):
+def reciprocal(x, clip_finite=True):
+    
     if isinstance(x, tf.Tensor):
-        transformed = 1.0/x
-        jacobian = 1.0 / (x*x)
-        log_jacobian = tf.reduce_sum(tf.log(jacobian))
+        if clip_finite:
+            # caution: assumes input is positive
+            x = tf.clip_by_value(x, 1e-38, 1e38, name="clipped_reciprocal_input")
+            
+        #transformed = 1.0/x
+        nlogx = -tf.log(x)
+        transformed = tf.exp(nlogx)
+        # jacobian might under/overflow so just compute log directly
+        log_jacobian = 2*tf.reduce_sum(nlogx)
     else:
         transformed = 1.0/x
         jacobian = 1.0 / (x*x)
@@ -61,3 +80,4 @@ def chain_transforms(*args):
 
 reciprocal_sqrt = chain_transforms(reciprocal, sqrt)
 reciprocal_square = chain_transforms(reciprocal, square)
+exp_reciprocal = chain_transforms(exp, reciprocal)

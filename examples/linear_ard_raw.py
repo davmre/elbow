@@ -3,6 +3,7 @@ import numpy as np
 
 import bayesflow.dists as bfd
 
+import util
 
 class LinearRegressionARD(object):
 
@@ -85,20 +86,8 @@ init = tf.initialize_all_variables()
 sess = tf.Session()
 sess.run(init)
 
-def batch_generator(X, y, batch_size, max_steps=None):
-    N = X.shape[0]
-    i = 0
-    while (max_steps is None) or i < max_steps:
-        i += 1
-        
-        p = np.random.permutation(N)[:batch_size]
-        xx = X[p]
-        yy = y[p]
-        yield i, xx, yy
 
-    
-
-for i, batch_xs, batch_ys in batch_generator(X, y, 64, max_steps=20000):
+for i, batch_xs, batch_ys in util.batch_generator(X, y, 64, max_steps=20000):
     feed_dict = {model.batch_X: batch_xs,
                  model.batch_y: batch_ys,
                  model.sigma_eps: np.random.randn(),
@@ -115,6 +104,3 @@ for i, batch_xs, batch_ys in batch_generator(X, y, 64, max_steps=20000):
 
     if i % 1000 == 999:
         import pdb; pdb.set_trace()
-"""
-import 
-"""
