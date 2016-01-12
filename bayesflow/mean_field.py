@@ -1,15 +1,9 @@
 import numpy as np
 import tensorflow as tf
 
-import dists
+import bayesflow.util as util
+import bayesflow.dists as dists
 
-def _tf_extract_shape(t):
-    shape = [d.value for d in t.get_shape()]
-    return shape
-
-# TODO: implement _infer_shape as a shared utility method based on _get_vector_dimension
-# also implement _tf_extract_shape as a subroutine
-# also make sure q_mean and q_stddev are the same, correct, inferred shape
 
 class MeanFieldInference(object):
 
@@ -31,8 +25,11 @@ class MeanFieldInference(object):
             latent["q_stddev"] = tf.Variable(init_stddev, name="q_stddev")
             latent["q_entropy"] = dists.gaussian_entropy(stddev=latent["q_stddev"])
             latent["transform"] = transform
-            if shape is None:
-                shape = _infer_shape(init_mean, init_stddev)
+
+            # TODO: infer shape, and make sure that
+            #       shapes of q_mean and q_stddev match
+            #if shape is None:
+            #    shape = _infer_shape(init_mean, init_stddev)
             latent["shape"] = shape
 
             tf.histogram_summary("latent_%s/q_mean" % name, latent["q_mean"])
@@ -58,11 +55,10 @@ class MeanFieldInference(object):
                                              name="%s_eps_%d" % (name, i))
                         self.gaussian_inputs.append(eps)
                         pre_transform = eps * latent["q_stddev"] + latent["q_mean"]
-
+                        
                         transform = latent["transform"]
                         if transform is not None:
                             node, log_jacobian = transform(pre_transform)
-                            jacobian_summary = tf.scalar_summary("log_jacobian", log_jacobian)
                             jacobian_terms.append(log_jacobian)
                         else:
                             node = pre_transform
@@ -74,7 +70,6 @@ class MeanFieldInference(object):
                 
                 symbols.update(self.jd_args)
                 joint_density = self.joint_density(**symbols)
-                #density_summary = tf.scalar_summary("density", joint_density)
                 
             density_terms.append(joint_density)
 
@@ -94,7 +89,7 @@ class MeanFieldInference(object):
             feed_dict = {}
             
         for eps in self.gaussian_inputs:
-            shape = _tf_extract_shape(eps)
+            shape = util._tf_extract_shape(eps)
             feed_dict[eps] = np.random.randn(*shape)
 
         return feed_dict
@@ -102,7 +97,9 @@ class MeanFieldInference(object):
     def get_posterior_samples(self, latent_name):
         return tf.pack(self.latents[latent_name]["samples"])
 
-    def train(self, adam_rate=0.1, steps=10000, print_interval=50, display_dict=None, sess=None):
+    def train(self, adam_rate=0.1, steps=10000,
+              print_interval=50, logdir=None,
+              display_dict=None, sess=None):
         
         if display_dict is None or len(display_dict)==0:
             print_names = []
@@ -113,13 +110,16 @@ class MeanFieldInference(object):
         print_vars = [self.elbo,] + list(print_vars)
 
         debug = tf.add_check_numerics_ops()
-        merged = tf.merge_all_summaries()
         train_step = tf.train.AdamOptimizer(adam_rate).minimize(-self.elbo)
         init = tf.initialize_all_variables()
 
         if sess is None:
             sess = tf.Session()
-        writer = tf.train.SummaryWriter("/tmp/mf_logs", sess.graph_def)
+
+        if logdir is not None:
+            merged = tf.merge_all_summaries()
+            writer = tf.train.SummaryWriter(logdir, sess.graph_def)
+
         sess.run(init)
         for i in range(steps):
             fd = self.sample_stochastic_inputs()
@@ -129,8 +129,9 @@ class MeanFieldInference(object):
                 print_str = " ".join(["%s %.4f" % (n, v) for (n, v) in zip(print_names, print_vals)])
                 print ("step %d " % i) + print_str
 
-                summary_str = sess.run(merged, feed_dict=fd)
-                writer.add_summary(summary_str, i)
+                if logdir is not None:
+                    summary_str = sess.run(merged, feed_dict=fd)
+                    writer.add_summary(summary_str, i)
 
             sess.run(debug, feed_dict=fd)
             sess.run(train_step, feed_dict = fd)
