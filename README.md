@@ -19,6 +19,7 @@ Currently implemented (at least partially):
   - `bf.transforms`: differentiable transformations for constrained latent variables
 - Inference algorithms:
   - `bayesflow.mean_field`: mean field Gaussian posterior inference via the reparameterization trick
+  - `bayesflow.mh`: Metropolis-Hastings with random-walk Gaussian proposals
 
 The `examples` directory contains several models (linear regression, matrix factorization, beta-bernoulli, variational autoencoders) implemented using Bayesflow components to varying extents.
 
