@@ -3,6 +3,12 @@ import tensorflow as tf
 import bayesflow as bf
 from bayesflow.mean_field import MeanFieldInference
 
+"""
+
+Bernoulli example from Stan: infer theta from observations under a Beta(1,1) prior.
+
+"""
+
 def bernoulli_joint_density(theta, data):        
     theta_prior = bf.dists.beta_log_density(theta, alpha=1, beta=1) 
     data_lik = tf.reduce_sum(bf.dists.bernoulli_log_density(data, theta))

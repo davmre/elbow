@@ -3,6 +3,10 @@ import tensorflow as tf
 import bayesflow as bf
 from bayesflow.mean_field import MeanFieldInference
 
+"""
+Bayesian sparse matrix factorization with Gaussian mean-field posterior
+"""
+
 ####################################################################
 # methods to sample from a Gaussian matrix prior with uniform random
 # sparsity pattern.

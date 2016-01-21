@@ -5,11 +5,9 @@ import bayesflow as bf
 
 from util import batch_generator
 
-# TODO:
-#  - figure out the story with transforms and initialization. I should really be able to specify a transform and easily compute its inverse.
-#  - check that generated density (and MAP solution) matches raw impl
-#  - check that generated ELBO matches raw implementation 
-#  - test against Stan
+"""
+Linear regression with ARD example model, from the Stan ADVI paper. Mostly untested. 
+"""
 
 def linear_ard_joint_density(batch_X, batch_y, alpha, sigma2, w, N):
 
