@@ -95,8 +95,7 @@ def gaussian_log_density(x, mean=None, stddev=None, variance=None):
     z = r*r / variance
     
     lps = -0.5 * z   - .5 * tf.log(2*np.pi * variance)
-    lp = tf.reduce_sum(lps)
-    return lp
+    return lps
 
 def gaussian_kl(mu_p, sigma2_p, mu_q=None, sigma2_q=None):
 
@@ -142,8 +141,7 @@ def inv_gamma_log_density(x, alpha, beta):
         gammaln_alpha = scipy.special.gammaln(alpha)
 
     lps = -beta / x + alpha * log_beta - (alpha+1) * tf.log(x) - gammaln_alpha
-    lp = tf.reduce_sum(lps)
-    return lp
+    return lps
     
 def gamma_log_density(x, alpha, beta, parameterization=None):
     """Creates a TensorFlow variable representing the sum of one or more
@@ -191,8 +189,7 @@ def gamma_log_density(x, alpha, beta, parameterization=None):
         l4 = scipy.special.gammaln(alpha)
 
     lps = l1 + l2 + l3 - l4
-    lp = tf.reduce_sum(lps)
-    return lp
+    return lps
 
 def beta_log_density(x, alpha=1.0, beta=1.0):
     log_z = betaln(alpha, beta)

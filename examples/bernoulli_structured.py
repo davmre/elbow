@@ -10,7 +10,7 @@ Bernoulli example from Stan: infer theta from observations under a Beta(1,1) pri
 """
 
 def bernoulli_joint_density(theta, data):        
-    theta_prior = bf.dists.beta_log_density(theta, alpha=1, beta=1) 
+    theta_prior = tf.reduce_sum(bf.dists.beta_log_density(theta, alpha=1, beta=1))
     data_lik = tf.reduce_sum(bf.dists.bernoulli_log_density(data, theta))
     joint_density = data_lik + theta_prior
     return joint_density

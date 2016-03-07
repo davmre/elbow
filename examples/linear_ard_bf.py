@@ -18,14 +18,14 @@ def linear_ard_joint_density(batch_X, batch_y, alpha, sigma2, w, N):
     
     batch_size = batch_y.get_shape()[0].value
 
-    alpha_prior = bf.dists.gamma_log_density(alpha, alpha=a0, beta=b0)
-    sigma2_prior = bf.dists.inv_gamma_log_density(sigma2, alpha=c0, beta=d0)
-    w_prior = bf.dists.gaussian_log_density(w, mean=0, stddev=tf.sqrt(sigma2/alpha))
+    alpha_prior = tf.reduce_sum(bf.dists.gamma_log_density(alpha, alpha=a0, beta=b0))
+    sigma2_prior = tf.reduce_sum(bf.dists.inv_gamma_log_density(sigma2, alpha=c0, beta=d0))
+    w_prior = tf.reduce_sum(bf.dists.gaussian_log_density(w, mean=0, stddev=tf.sqrt(sigma2/alpha)))
 
     ybar = tf.matmul(batch_X,tf.expand_dims(w, 1))
-    y_lik = bf.dists.gaussian_log_density(batch_y,
-                                          mean=ybar,
-                                          stddev=tf.sqrt(sigma2))
+    y_lik = tf.reduce_sum(bf.dists.gaussian_log_density(batch_y,
+                                                        mean=ybar,
+                                                        stddev=tf.sqrt(sigma2)))
 
     
     joint_density = y_lik + float(batch_size)/N * alpha_prior + sigma2_prior + w_prior

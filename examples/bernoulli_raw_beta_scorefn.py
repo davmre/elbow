@@ -30,8 +30,8 @@ class BernoulliModel(object):
 
         self.thetas = tf.placeholder(shape=(n_thetas,), dtype=tf.float32, name="thetas")
         
-        self.thetas_q_log_density = bf.dists.beta_log_density(self.thetas, alpha=self.theta_q_alpha, beta=self.theta_q_beta)
-        self.thetas_prior = bf.dists.beta_log_density(self.thetas, alpha=1., beta=1.) 
+        self.thetas_q_log_density = tf.reduce_sum(bf.dists.beta_log_density(self.thetas, alpha=self.theta_q_alpha, beta=self.theta_q_beta))
+        self.thetas_prior = tf.reduce_sum(bf.dists.beta_log_density(self.thetas, alpha=1., beta=1.) )
 
         self.data_liks = tf.pack([tf.reduce_sum(bf.dists.bernoulli_log_density(self.data, theta)) for theta in tf.unpack(self.thetas)])
         self.joint_density = self.data_liks + self.thetas_prior
