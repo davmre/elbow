@@ -39,23 +39,23 @@ def draw_prior_sample(n_points, n_clusters, dim, cluster_center_std, cluster_spr
 
 def gmm_density_marginalized(centers, weights, points, cluster_center_std, cluster_spread_std):
     """
-    the full GMM model p(C, Z, X) = p(C)p(Z)p(X | Z, C)
+    the full GMM model is p(C, Z, X) = p(C)p(Z)p(X | Z, C), with
       cluster centers C with Gaussian prior
       cluster assignments Z with prior of form multinomial(weights) 
       observed points X from Gaussian conditionals
 
-    we can write as p(C, X) = p(C) \sum_Z p(X, Z | C)
-                            = p(C) \sum_Z p(Z) p(X | Z, C)
-                            = p(C) \sum_Z \prod_i p(z_i) p(x_i | z_i, C)
-                            = p(C) \prod_i \sum_{z_i} p(z_i) p(x_i | z_i, C)
+    marginalizing over Z we get p(C, X) = p(C) \sum_Z p(X, Z | C)
+                                        = p(C) \sum_Z p(Z) p(X | Z, C)
+                                        = p(C) \sum_Z \prod_i p(z_i) p(x_i | z_i, C)
+                                        = p(C) \prod_i \sum_{z_i} p(z_i) p(x_i | z_i, C)
     or in practice log p(C, X) = log p(C) + \sum_i log \sum_{z_i} weights[z_i] N(x_i; C_{z_i}, cluster_spread_std)
 
-    where the point is that by marginalizing over the assignments Z, all remaining variables 
-    are continuous and easy to optimize over. 
+    where the point is that after marginalizing out the discrete variables, all remaining variables 
+    are continuous and easy to optimize over.
 
-    If we didn't do this, we'd have to explicitly represent a variational posterior q(Z), presumably
-    factored into a multinomial distribution for each point z_i. But this posterior is hard to
-    update because we can't use the reparameterization trick.
+    If we didn't do this, we'd have to explicitly represent a variational posterior q(Z) for the assignments, 
+    presumably factored into a multinomial distribution q(z_i) for each point i. But this posterior is hard to
+    update because we can't use the reparameterization trick, and REINFORCE gradients are much noisier.
     """
     # log p(C)
     prior_lp = tf.reduce_sum(bf.dists.gaussian_log_density(centers, 0.0, cluster_center_std))
@@ -85,7 +85,8 @@ def main():
     dim = 2
 
     true_centers, points = draw_prior_sample(n_points, n_clusters, dim,
-                                             cluster_center_std, cluster_spread_std)
+                                             cluster_center_std,
+                                             cluster_spread_std)
 
     mf = MeanFieldInference(gmm_density_marginalized,
                             points=points,
@@ -94,7 +95,8 @@ def main():
     
     init_centers = np.float32(np.random.randn(n_clusters, dim))
     mf.add_latent("centers", init_centers,
-                  np.float32(np.ones((n_clusters,dim)) * 1e-3), None, shape=(n_clusters, dim))
+                  init_stddev=np.float32(np.ones((n_clusters,dim)) * 1e-3),
+                  shape=(n_clusters, dim))
 
     # learn a point estimate of the cluster weights. Note that we
     # parameterize the weights by an unconstrained vector that is then
@@ -103,7 +105,7 @@ def main():
     mf.add_latent("weights", init_weights,
                   point_estimate=True,
                   transform=bf.transforms.simplex,
-                  shape=(n_clusters, dim))
+                  shape=(n_clusters,))
 
     elbo = mf.build_stochastic_elbo(n_eps=1)
 
