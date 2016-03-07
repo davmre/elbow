@@ -15,15 +15,25 @@ class MeanFieldInference(object):
         self.latents = {}
 
         
-    def add_latent(self, name, init_mean=None, init_stddev=1e-6, transform=None, shape=None):
+    def add_latent(self, name,
+                   init_mean=None,
+                   init_stddev=1e-6,
+                   transform=None,
+                   shape=None,
+                   point_estimate=False):
         if init_mean is None:
             init_mean = np.random.randn()
             
         with tf.name_scope("latent_" + name) as scope:
             latent = {}
             latent["q_mean"] = tf.Variable(init_mean, name="q_mean")
-            latent["q_stddev"] = tf.Variable(init_stddev, name="q_stddev")
-            latent["q_entropy"] = dists.gaussian_entropy(stddev=latent["q_stddev"])
+            if point_estimate:
+                latent["q_stddev"] = None
+                latent["q_entropy"] = 0.0
+            else:
+                latent["q_stddev"] = tf.Variable(init_stddev, name="q_stddev")
+                latent["q_entropy"] = dists.gaussian_entropy(stddev=latent["q_stddev"])
+                
             latent["transform"] = transform
 
             # TODO: infer shape, and make sure that
@@ -33,8 +43,10 @@ class MeanFieldInference(object):
             latent["shape"] = shape
 
             tf.histogram_summary("latent_%s/q_mean" % name, latent["q_mean"])
-            tf.histogram_summary("latent_%s/q_stddev" % name, latent["q_stddev"])
-        
+
+            if not point_estimate:
+                tf.histogram_summary("latent_%s/q_stddev" % name, latent["q_stddev"])
+
         self.latents[name] = latent
 
     def build_stochastic_elbo(self, n_eps=1):
@@ -50,12 +62,15 @@ class MeanFieldInference(object):
                 symbols = {}
                 for name, latent in self.latents.items():
                     with tf.name_scope(name) as local_scope:
-                        eps = tf.placeholder(dtype=tf.float32,
-                                             shape=latent["shape"],
-                                             name="%s_eps_%d" % (name, i))
-                        self.gaussian_inputs.append(eps)
-                        pre_transform = eps * latent["q_stddev"] + latent["q_mean"]
-                        
+                        if latent["q_stddev"] is not None:
+                            eps = tf.placeholder(dtype=tf.float32,
+                                                 shape=latent["shape"],
+                                                 name="%s_eps_%d" % (name, i))
+                            self.gaussian_inputs.append(eps)
+                            pre_transform = eps * latent["q_stddev"] + latent["q_mean"]
+                        else:
+                            pre_transform = latent["q_mean"]
+                            
                         transform = latent["transform"]
                         if transform is not None:
                             node, log_jacobian = transform(pre_transform)
