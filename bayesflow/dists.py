@@ -198,7 +198,23 @@ def beta_log_density(x, alpha=1.0, beta=1.0):
     log_density = (alpha - 1) * tf.log(x) + (beta-1) * tf.log(1-x) - log_z
     return log_density
 
-def bernoulli_kl(p, q, clip_finite=True, ):
+def bernoulli_entropy(p, cross_q=None, clip_finite=True):
+    # compute the entropy of a (tensor of independent) bernoulli distribution with probabilities p,
+    # or optionally the cross-entropy with respect to another distribution with probabilities cross_q. 
+    
+    if cross_q is None:
+        cross_q = p
+    
+    if clip_finite:
+        lq = tf.log(tf.clip_by_value(cross_q, 1e-45, 1.0), name="bernoulli_logp")
+        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-45, 1.0), name="bernoulli_log1p")
+    else:
+        lq = tf.log(cross_q, name="bernoulli_logp")
+        lq1 = tf.log(1.0-cross_q, name="bernoulli_log1p")
+
+    entropy = -p * lq - (1.0-p) * lq1
+
+def bernoulli_kl(p, q, clip_finite=True):
 
     if clip_finite:
         lp = tf.log(tf.clip_by_value(p, 1e-45, 1.0), name="bernoulli_logp")
