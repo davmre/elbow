@@ -39,14 +39,18 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
         expected_result = tf.matmul(mA, tf.transpose(mB))
         gaussian_lp = tf.reduce_sum(bf.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
-        
-        aat_diag = tf.reduce_sum(tf.square(mA), 0)
-        p = tf.reduce_sum(vA, 0)
-        
-        btb_diag = tf.reduce_sum(tf.square(mB), 0)
-        q = tf.reduce_sum(vB, 0)
-        
-        correction = tf.reduce_sum(p*q + p*btb_diag + aat_diag*q)
+
+        # can do a more efficient calculation if we assume a uniform (scalar) noise variance across all entries
+        #aat_diag = tf.reduce_sum(tf.square(mA), 0)
+        #p = tf.reduce_sum(vA, 0)
+        #btb_diag = tf.reduce_sum(tf.square(mB), 0)
+        #q = tf.reduce_sum(vB, 0)
+        #correction = tf.reduce_sum(p*q + p*btb_diag + aat_diag*q) / scalar_variance
+
+        vAvB = tf.matmul(vA, tf.transpose(vB))
+        vAmB = tf.matmul(vA, tf.transpose(tf.square(mB)))
+        mAvB = tf.matmul(tf.square(mA), tf.transpose(vB))
+        correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
         
         expected_lp = gaussian_lp - .5 * correction
         
@@ -86,9 +90,9 @@ class NoisyCumulativeSum(ConditionalDistribution):
         expected_X = tf.matmul(cumsum_mat, q_A.mean)
         gaussian_lp = bf.dists.gaussian_log_density(X, expected_X, variance=var)
 
-        # FIXME what's the correct expression?
-        sigma2_n = 0.01
-        corrections = -.5 * tf.matmul(r, q_A.variance) / sigma2_n
+        # performs a reverse cumulative sum
+        R = tf.matmul(cumsum_mat, 1.0/var, transpose_a=True)
+        corrections = -.5 * R * q_A.variance
 
         reduced_gaussian_lp =  tf.reduce_sum(gaussian_lp) 
         reduced_correction = tf.reduce_sum(corrections)
