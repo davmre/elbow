@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from util import _tf_extract_shape
+import util
 
 def logit(x, clip_finite=True):
     if isinstance(x, np.ndarray):
@@ -26,7 +26,7 @@ def normalize(x_positive):
         transformed = x_positive / Z    
         log_jacobian = -n * np.log(Z)
     else:
-        n = _tf_extract_shape(x_positive)[0]
+        n = util._tf_extract_shape(x_positive)[0]
         Z = tf.reduce_sum(x_positive)
         transformed = x_positive / Z    
         log_jacobian = -n * tf.log(Z)

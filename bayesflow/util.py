@@ -10,7 +10,7 @@ def _infer_result_shape(*args):
     # otherwise I could create dummy tensors and pass them around?
     pass
 
-def _tf_extract_shape(t):
+def extract_shape(t):
 
     if t.get_shape():
         pass
@@ -19,3 +19,8 @@ def _tf_extract_shape(t):
         shape = []
     return shape
 
+
+def as_tf_constant(x):
+    """
+    If we 
+    """
