@@ -73,8 +73,11 @@ class PointwiseTransformedQDistribution(QDistribution):
         self.parent_q = parent_q
         
     def sample_stochastic_inputs(self):
-        return {}
-    
+        if self.implicit:
+            return {}
+        else:
+            return self.parent_q.sample_stochastic_inputs()
+        
     def entropy(self):
         if self.implicit:
             return 0.0
