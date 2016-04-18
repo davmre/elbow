@@ -10,6 +10,8 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
     def __init__(self, A, B, std):
         super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std)      
+
+        self.K = A.output_shape[1]
         
     def inputs(self):
         return ("A", "B", "std")
@@ -55,6 +57,17 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         expected_lp = gaussian_lp - .5 * correction
         
         return expected_lp
+
+    def elbo_term(self, symmetry_correction_hack=True):
+        term = super(NoisyGaussianMatrixProduct, self).elbo_term()
+
+        if symmetry_correction_hack:
+            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+            signflip_correction = self.K * np.log(2)
+            term = term + permutation_correction + signflip_correction
+
+        return term
+    
     
 class NoisyCumulativeSum(ConditionalDistribution):
     
@@ -102,6 +115,7 @@ class NoisyLatentFeatures(ConditionalDistribution):
 
     def __init__(self, B, G, std):
         super(NoisyLatentFeatures, self).__init__(B=B, G=G, std=std)      
+        self.K = B.output_shape[1]
         
     def inputs(self):
         return ("B", "G", "std")
@@ -165,6 +179,15 @@ class NoisyLatentFeatures(ConditionalDistribution):
 
         return expected_lp
 
+    def elbo_term(self, symmetry_correction_hack=True):
+        term = super(NoisyLatentFeatures, self).elbo_term()
+
+        if symmetry_correction_hack:
+            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+            term = term + permutation_correction
+                
+        return term
+
 
 class GMMClustering(ConditionalDistribution):
 
@@ -208,7 +231,17 @@ class GMMClustering(ConditionalDistribution):
         obs_lp = tf.reduce_sum(tf.log(total_ps))
 
         return obs_lp
-        
+
+    def elbo_term(self, symmetry_correction_hack=True):
+        term = super(GMMClustering, self).elbo_term()
+
+        if symmetry_correction_hack:
+            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+            term = term + permutation_correction
+                
+        return term
+
+    
 class MultiplicativeGaussianNoise(ConditionalDistribution):    
 
     def __init__(self, A, std, **kwargs):
