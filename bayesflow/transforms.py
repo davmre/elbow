@@ -26,7 +26,7 @@ def normalize(x_positive):
         transformed = x_positive / Z    
         log_jacobian = -n * np.log(Z)
     else:
-        n = util._tf_extract_shape(x_positive)[0]
+        n = util.extract_shape(x_positive)[0]
         Z = tf.reduce_sum(x_positive)
         transformed = x_positive / Z    
         log_jacobian = -n * tf.log(Z)
