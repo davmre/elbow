@@ -18,7 +18,7 @@ class ConditionalDistribution(object):
     """
 
     
-    def __init__(self, output_shape=None, name=None, **kwargs):
+    def __init__(self, output_shape=None, dtype=None, name=None, **kwargs):
         # store map of input param names to the nodes modeling those params
         self.input_nodes = {}
         for input_name in self.inputs():
@@ -27,7 +27,7 @@ class ConditionalDistribution(object):
             if isinstance(kwargs[input_name], ConditionalDistribution):
                 self.input_nodes[input_name] = kwargs[input_name]
             else:
-                constant_node = DeltaDistribution(kwargs[input_name])
+                constant_node = FlatDistribution(kwargs[input_name], fixed=True)
                 self.input_nodes[input_name] = constant_node
 
         self.name = name
@@ -38,9 +38,12 @@ class ConditionalDistribution(object):
         else:
             input_shapes = {name + "_shape": node.output_shape for (name,node) in self.input_nodes.items()}
             self.output_shape = self._compute_shape(**input_shapes)
-        
-        input_dtypes = {name + "_dtype": node.dtype for (name,node) in self.input_nodes.items()}
-        self.dtype = self._compute_dtype(**input_dtypes)
+
+        if dtype is not None:
+            self.dtype = dtype
+        else:
+            input_dtypes = {name + "_dtype": node.dtype for (name,node) in self.input_nodes.items()}
+            self.dtype = self._compute_dtype(**input_dtypes)
         
         # compute the list of all ancestor nodes in the graph, by merging the ancestor lists of the parent nodes. 
         # Storing this for every node is slightly inefficient, but makes for simpler code by avoiding the need for a
@@ -70,8 +73,8 @@ class ConditionalDistribution(object):
         self.attach_q(qdist)
         return qdist
         
-    def attach_gaussian_q(self):
-        q = GaussianQDistribution(shape=self.output_shape)
+    def attach_gaussian_q(self, **kwargs):
+        q = GaussianQDistribution(shape=self.output_shape, **kwargs)
         self.attach_q(q)
         return q
     
@@ -80,31 +83,45 @@ class ConditionalDistribution(object):
         expected_lp = self._expected_logp(q_result = self.q_distribution, **input_qs)
         entropy = self.q_distribution.entropy()
         return expected_lp, entropy
-        
-class DeltaDistribution(ConditionalDistribution):
+
+    def _expected_logp(self, **kwargs):
+        # default implementation: compute E_q[ log p(x) ] as a Monte Carlo sample.
+        samples = {}
+        for (q_key, qdist) in kwargs.items():
+            assert(q_key.startswith("q_"))
+            key = q_key[2:]
+            samples[key] = qdist.sample
+        return self._logp(**samples)
+    
+class FlatDistribution(ConditionalDistribution):
 
     """
-    A "dummy" distribution object representing a fixed value, e.g. the parameters of a prior distribution. 
+    A "dummy" distribution object representing a flat prior. It requires a "default" value that will
+    be returned when sampling from this distribution. 
+    
+    Parameters with known or fixed values can be represented using a flat prior and an ObservedQDistribution 
+    to fix them to the given value. 
     """
     
-    def __init__(self, fixed_value):
+    def __init__(self, value, fixed=True):
         try:
-            self.dtype = fixed_value.dtype
+            self.dtype = value.dtype
         except:
             self.dtype = np.float32
         
-        self.fixed_value = np.asarray(fixed_value, dtype=self.dtype) 
-        output_shape = self.fixed_value.shape        
-        super(DeltaDistribution, self).__init__(output_shape = output_shape)
-        
-        qdist  = ObservedQDistribution(self.fixed_value)
-        self.attach_q(qdist)
+        self.value = np.asarray(value, dtype=self.dtype) 
+        output_shape = self.value.shape        
+        super(FlatDistribution, self).__init__(output_shape = output_shape)
+
+        if fixed:
+            qdist = ObservedQDistribution(self.value)
+            self.attach_q(qdist)
         
     def inputs(self):
         return ()
         
     def _sample(self, seed=0):
-        return self.fixed_value
+        return self.value
     
     def _compute_dtype(self):
         return self.dtype
@@ -112,6 +129,8 @@ class DeltaDistribution(ConditionalDistribution):
     def _expected_logp(self, q_result):        
         return 0.0
 
+
+    
 def construct_elbo(*evidence_nodes):
     model_nodes = set([ancestor for node in evidence_nodes for ancestor in node.ancestors])
     expected_likelihoods, entropies = zip(*[node.elbo_term() for node in model_nodes])
