@@ -21,8 +21,8 @@ class PointwiseTransformedMatrix(ConditionalDistribution):
         tA, _ = self.transform(A)
         return tA
     
-    def _expected_logp(self, q_result, q_A):
-        return 0.0
+    def _logp(self, result, A):
+        return tf.constant(0.0, dtype=tf.float32)
     
     def _compute_shape(self, A_shape):
         return A_shape

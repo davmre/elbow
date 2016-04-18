@@ -8,8 +8,8 @@ from bayesflow.models import ConditionalDistribution
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std):
-        super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std)      
+    def __init__(self, A, B, std, **kwargs):
+        super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std,  **kwargs) 
 
         self.K = A.output_shape[1]
         
@@ -59,20 +59,20 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         return expected_lp
 
     def elbo_term(self, symmetry_correction_hack=True):
-        term = super(NoisyGaussianMatrixProduct, self).elbo_term()
+        expected_logp, entropy = super(NoisyGaussianMatrixProduct, self).elbo_term()
 
         if symmetry_correction_hack:
             permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
             signflip_correction = self.K * np.log(2)
-            term = term + permutation_correction + signflip_correction
+            expected_logp = expected_logp + permutation_correction + signflip_correction
 
-        return term
+        return expected_logp, entropy
     
     
 class NoisyCumulativeSum(ConditionalDistribution):
     
-    def __init__(self, A, std):
-        super(NoisyCumulativeSum, self).__init__(A=A, std=std)      
+    def __init__(self, A, std,  **kwargs):
+        super(NoisyCumulativeSum, self).__init__(A=A, std=std,  **kwargs)      
         
     def inputs(self):
         return ("A",  "std")
@@ -113,8 +113,8 @@ class NoisyCumulativeSum(ConditionalDistribution):
     
 class NoisyLatentFeatures(ConditionalDistribution):
 
-    def __init__(self, B, G, std):
-        super(NoisyLatentFeatures, self).__init__(B=B, G=G, std=std)      
+    def __init__(self, B, G, std,  **kwargs):
+        super(NoisyLatentFeatures, self).__init__(B=B, G=G, std=std,  **kwargs)      
         self.K = B.output_shape[1]
         
     def inputs(self):
@@ -180,13 +180,13 @@ class NoisyLatentFeatures(ConditionalDistribution):
         return expected_lp
 
     def elbo_term(self, symmetry_correction_hack=True):
-        term = super(NoisyLatentFeatures, self).elbo_term()
+        expected_logp, entropy = super(NoisyLatentFeatures, self).elbo_term()
 
         if symmetry_correction_hack:
             permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
-            term = term + permutation_correction
+            expected_logp = expected_logp + permutation_correction
                 
-        return term
+        return expected_logp, entropy
 
 
 class GMMClustering(ConditionalDistribution):
@@ -233,13 +233,13 @@ class GMMClustering(ConditionalDistribution):
         return obs_lp
 
     def elbo_term(self, symmetry_correction_hack=True):
-        term = super(GMMClustering, self).elbo_term()
+        expected_logp, entropy = super(GMMClustering, self).elbo_term()
 
         if symmetry_correction_hack:
-            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
-            term = term + permutation_correction
+            permutation_correction = np.sum(np.log(np.arange(1, self.n_clusters+1))) # log K!
+            expected_logp = expected_logp + permutation_correction
                 
-        return term
+        return expected_logp, entropy
 
     
 class MultiplicativeGaussianNoise(ConditionalDistribution):    

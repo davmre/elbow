@@ -12,7 +12,10 @@ import bayesflow.util as util
 class QDistribution(object):
     def __init__(self, shape):
         self.output_shape=shape
-    
+
+    def params(self):
+        return {"sample": self.sample}
+        
     def sample_stochastic_inputs(self):
         raise Exception("not implemented")
 
@@ -36,7 +39,7 @@ class ObservedQDistribution(QDistribution):
         return {}
     
     def entropy(self):
-        return 0.0
+        return tf.constant(0.0, dtype=tf.float32)
 
 class DeltaQDistribution(QDistribution):
     def __init__(self, tf_value):
@@ -53,7 +56,8 @@ class DeltaQDistribution(QDistribution):
         return {}
     
     def entropy(self):
-        return 0.0
+        return tf.constant(0.0, dtype=tf.float32)
+    
 
 class PointwiseTransformedQDistribution(QDistribution):
     def __init__(self, parent_q, transform, implicit=False):
@@ -80,7 +84,7 @@ class PointwiseTransformedQDistribution(QDistribution):
         
     def entropy(self):
         if self.implicit:
-            return 0.0
+            return tf.constant(0.0, dtype=tf.float32)
         else:
             return self.parent_q.entropy() + self.log_jacobian
         
@@ -105,7 +109,8 @@ class GaussianQDistribution(QDistribution):
         else:
             self._entropy = tf.reduce_sum(bf.dists.gaussian_entropy(variance=self.variance))
 
-
+    def params(self):
+        return {"mean": self.mean, "stddev": self.stddev, "sample": self.sample}
         
     def sample_stochastic_inputs(self):
         sampled_eps = np.random.randn(*self.output_shape)
@@ -127,6 +132,9 @@ class BernoulliQDistribution(QDistribution):
         self.sample = self.stochastic_eps < self.probs     
         
         self._entropy = tf.reduce_sum(bf.dists.bernoulli_entropy(p=self.probs))
+
+    def params(self):
+        return {"probs": self.probs, "sample": self.sample}
         
     def sample_stochastic_inputs(self):
         sampled_eps = np.random.rand(*self.output_shape)

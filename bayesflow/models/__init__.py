@@ -1,10 +1,13 @@
 import numpy as np
 import tensorflow as tf
 
+import uuid
+
 import bayesflow as bf
 import bayesflow.util as util
-
 from bayesflow.models.q_distributions import ObservedQDistribution, GaussianQDistribution
+
+
 
 class ConditionalDistribution(object):
     """
@@ -19,6 +22,12 @@ class ConditionalDistribution(object):
 
     
     def __init__(self, output_shape=None, dtype=None, name=None, **kwargs):
+
+        if name is None:
+            name = str(self.__class__.__name__) + "_" + str(uuid.uuid4().hex)[:6]
+            print "constructed name", name
+        self.name = name
+
         # store map of input param names to the nodes modeling those params
         self.input_nodes = {}
         for input_name in self.inputs():
@@ -27,10 +36,9 @@ class ConditionalDistribution(object):
             if isinstance(kwargs[input_name], ConditionalDistribution):
                 self.input_nodes[input_name] = kwargs[input_name]
             else:
-                constant_node = FlatDistribution(kwargs[input_name], fixed=True)
+                constant_node = FlatDistribution(kwargs[input_name], fixed=True, name=self.name+"_"+input_name+"_fixed")
                 self.input_nodes[input_name] = constant_node
 
-        self.name = name
                 
         # compute the shape of the output at this node
         if output_shape is not None:
@@ -58,10 +66,15 @@ class ConditionalDistribution(object):
         self._sampled_value_seed = None
             
     def sample(self, seed=0):
+        
         if seed != self._sampled_value_seed:
             input_samples = {name: node.sample(seed=seed) for (name,node) in self.input_nodes.items()}        
+
+            # add a salt to ensure we get independent samples at each node
+            salt = self.name.__hash__()
+            local_seed = (seed + salt) % (2**32)
+            np.random.seed(local_seed)
             
-            np.random.seed(seed)
             self._sampled_value_seed = seed
             self._sampled_value = self._sample(**input_samples)
         
@@ -69,6 +82,12 @@ class ConditionalDistribution(object):
     
     def attach_q(self, q_distribution):
         # TODO check that the types and shape of the Q distribution match
+
+        if "q_distribution" in self.__dict__ and self.q_distribution is not None:
+            raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self.q_distribution, self, self.q_distribution))
+
+        assert(self.output_shape == q_distribution.output_shape)
+        
         self.q_distribution = q_distribution
     
     def observe(self, observed_val):
@@ -83,7 +102,9 @@ class ConditionalDistribution(object):
     
     def elbo_term(self):
         input_qs = {"q_"+name: node.q_distribution for (name,node) in self.input_nodes.items()}
-        expected_lp = self._expected_logp(q_result = self.q_distribution, **input_qs)
+        with tf.name_scope(self.name + "_Elogp") as scope:
+            expected_lp = self._expected_logp(q_result = self.q_distribution, **input_qs)
+
         entropy = self.q_distribution.entropy()
         return expected_lp, entropy
 
@@ -95,6 +116,9 @@ class ConditionalDistribution(object):
             key = q_key[2:]
             samples[key] = qdist.sample
         return self._logp(**samples)
+
+    def __str__(self):
+        return self.name + "_" + str(type(self))
     
 class FlatDistribution(ConditionalDistribution):
 
@@ -106,7 +130,7 @@ class FlatDistribution(ConditionalDistribution):
     to fix them to the given value. 
     """
     
-    def __init__(self, value, fixed=True):
+    def __init__(self, value, fixed=True, **kwargs):
         try:
             self.dtype = value.dtype
         except:
@@ -114,7 +138,7 @@ class FlatDistribution(ConditionalDistribution):
         
         self.value = np.asarray(value, dtype=self.dtype) 
         output_shape = self.value.shape        
-        super(FlatDistribution, self).__init__(output_shape = output_shape)
+        super(FlatDistribution, self).__init__(output_shape = output_shape, **kwargs)
 
         if fixed:
             qdist = ObservedQDistribution(self.value)
@@ -128,23 +152,9 @@ class FlatDistribution(ConditionalDistribution):
     
     def _compute_dtype(self):
         return self.dtype
-        
-    def _expected_logp(self, q_result):        
-        return 0.0
 
+    def _logp(self, result):
+        return tf.constant(0.0, dtype=tf.float32)
 
-    
-def construct_elbo(*evidence_nodes):
-
-    model_nodes = set([ancestor for node in evidence_nodes for ancestor in node.ancestors])
-    expected_likelihoods, entropies = zip(*[node.elbo_term() for node in model_nodes])
-    expected_likelihood = tf.reduce_sum(tf.pack(expected_likelihoods))
-    entropy = tf.reduce_sum(tf.pack(entropies))
-    
-    q_distributions = set([node.q_distribution for node in model_nodes])
-    def sample_stochastic_inputs():
-        return {var: val for qdist in q_distributions for (var, val) in qdist.sample_stochastic_inputs().items()}
-
-    return expected_likelihood + entropy, sample_stochastic_inputs
 
                                     

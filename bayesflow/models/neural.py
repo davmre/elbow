@@ -18,8 +18,8 @@ def init_zero_vector(n_out):
     return tf.Variable(tf.zeros((n_out,), dtype=tf.float32))
 
 class VAEDecoderBernoulli(ConditionalDistribution):
-    def __init__(self, z, w1, w2, b1, b2):
-        super(VAEDecoderBernoulli, self).__init__(z=z, w1=w1, w2=w2, b1=b1, b2=b2)
+    def __init__(self, z, w1, w2, b1, b2, **kwargs):
+        super(VAEDecoderBernoulli, self).__init__(z=z, w1=w1, w2=w2, b1=b1, b2=b2, **kwargs)
 
         
     def inputs(self):

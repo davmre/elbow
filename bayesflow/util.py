@@ -14,9 +14,9 @@ def extract_shape(t):
 
     if t.get_shape():
         pass
-    shape = [d.value for d in t.get_shape()]
+    shape = tuple([d.value for d in t.get_shape()])
     if len(shape)==1 and shape[0] is None:
-        shape = []
+        shape = ()
     return shape
 
 
