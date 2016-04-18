@@ -70,9 +70,9 @@ def expected_log_likelihood(bernoulli_params, q_A_means, q_A_stds, X_means, X_st
 
     
     expected_X = tf.matmul(bernoulli_params, q_A_means)
-    effective_stds = X_stds + noise_stds
-    precisions = 1.0/tf.square(effective_stds)
-    gaussian_lp = bf.dists.gaussian_log_density(X_means, expected_X, effective_stds)
+    effective_var = tf.square(X_stds) + tf.square(noise_stds)
+    precisions = 1.0/effective_var
+    gaussian_lp = bf.dists.gaussian_log_density(X_means, expected_X, variance=effective_var)
     
     mu2 = tf.square(q_A_means)
     tau_V = tf.matmul(bernoulli_params, tf.square(q_A_stds))
