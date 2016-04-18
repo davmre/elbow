@@ -19,12 +19,8 @@ class GammaMatrix(ConditionalDistribution):
     def _sample(self, alpha, beta):
         scale = 1.0/beta
         return np.asarray(scipy.stats.gamma(a=alpha, scale=scale).rvs(*self.output_shape), dtype=self.dtype)
-        
-    def _expected_logp(self, q_result, q_alpha, q_beta):
-        alpha = q_alpha.sample
-        beta = q_beta.sample
-        result = q_result.sample
-        
+
+    def _logp(self, result, alpha, beta):    
         lp = tf.reduce_sum(bf.dists.gamma_log_density(result, alpha, beta))
         return lp
 
@@ -57,7 +53,7 @@ class BernoulliMatrix(ConditionalDistribution):
         p_z = q_p.sample
         q_z = q_result.probs
         
-        lp = tf.reduce_sum(bf.dists.bernoulli_entropy(q_z, cross_q = p_z))
+        lp = -tf.reduce_sum(bf.dists.bernoulli_entropy(q_z, cross_q = p_z))
         return lp
     
     def _compute_shape(self, p_shape):
@@ -118,7 +114,7 @@ class GaussianMatrix(ConditionalDistribution):
     
     def _expected_logp(self, q_result, q_mean, q_std):
         cross = bf.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, q_mean.sample, tf.square(q_std.sample))
-        return tf.reduce_sum(cross)
+        return -tf.reduce_sum(cross)
     
     def _compute_shape(self, mean_shape, std_shape):
         return bf.util.broadcast_shape(mean_shape, std_shape)

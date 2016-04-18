@@ -67,10 +67,10 @@ def gaussian_entropy(stddev=None, variance=None):
     return entropy
 
 def gaussian_cross_entropy(mean_p, variance_p, mean_q, variance_q):
-    # E_p [ log q(x) ]
+    # E_p [ - log q(x) ]
     gaussian_lp = gaussian_log_density(mean_p, mean = mean_q, variance=variance_q)
-    correction = -.5 * variance_p
-    return gaussian_lp + correction
+    correction = -.5 * variance_p / variance_q
+    return  - (gaussian_lp + correction)
 
 def gaussian_kl(mu_p, sigma2_p, mu_q=None, sigma2_q=None):
 
