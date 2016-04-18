@@ -6,18 +6,19 @@ import bayesflow.util as util
 
 from bayesflow.models import ConditionalDistribution
 
+import scipy.stats
 
 class GammaMatrix(ConditionalDistribution):
     
-    def __init__(self, alpha, beta, output_shape=None):
-        super(GaussianMatrix, self).__init__(alpha=alpha, beta=beta, output_shape=output_shape)
+    def __init__(self, alpha, beta, **kwargs):
+        super(GammaMatrix, self).__init__(alpha=alpha, beta=beta, **kwargs)
     
     def inputs(self):
         return ("alpha", "beta")
     
     def _sample(self, alpha, beta):
         scale = 1.0/beta
-        return np.asarray(scipy.stats.gamma(alpha=alpha, scale=scale).rvs(*self.output_shape), dtype=self.dtype)
+        return np.asarray(scipy.stats.gamma(a=alpha, scale=scale).rvs(*self.output_shape), dtype=self.dtype)
         
     def _expected_logp(self, q_result, q_alpha, q_beta):
         alpha = q_alpha.sample
@@ -35,8 +36,8 @@ class GammaMatrix(ConditionalDistribution):
         return alpha_dtype
 
 class BernoulliMatrix(ConditionalDistribution):
-    def __init__(self, p, output_shape=None):
-        super(BernoulliMatrix, self).__init__(p=p, output_shape=output_shape)        
+    def __init__(self, p, **kwargs):
+        super(BernoulliMatrix, self).__init__(p=p, **kwargs)        
         
     def inputs(self):
         return ("p")
@@ -73,8 +74,8 @@ class MultinomialMatrix(ConditionalDistribution):
     # matrix shape: N x K
     # parameter shape: (K,)
     
-    def __init__(self, p, output_shape=None):
-        super(MultinomialMatrix, self).__init__(p=p, output_shape=output_shape)        
+    def __init__(self, p, **kwargs):
+        super(MultinomialMatrix, self).__init__(p=p, **kwargs) 
         
     def inputs(self):
         return ("p")
@@ -102,8 +103,8 @@ class MultinomialMatrix(ConditionalDistribution):
     
 class GaussianMatrix(ConditionalDistribution):
     
-    def __init__(self, mean, std, output_shape=None):
-        super(GaussianMatrix, self).__init__(mean=mean, std=std, output_shape=output_shape)        
+    def __init__(self, mean, std, **kwargs):
+        super(GaussianMatrix, self).__init__(mean=mean, std=std, **kwargs) 
         
     def inputs(self):
         return ("mean", "std")

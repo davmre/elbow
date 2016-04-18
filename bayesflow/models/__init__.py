@@ -45,10 +45,13 @@ class ConditionalDistribution(object):
             input_dtypes = {name + "_dtype": node.dtype for (name,node) in self.input_nodes.items()}
             self.dtype = self._compute_dtype(**input_dtypes)
         
-        # compute the list of all ancestor nodes in the graph, by merging the ancestor lists of the parent nodes. 
-        # Storing this for every node is slightly inefficient, but makes for simpler code by avoiding the need for a
-        # graph traversal when constructing joint quantities like the ELBO. This could be optimized if the ancestor lists
-        # ever become a performance bottleneck. 
+        # compute the list of all ancestor nodes in the graph, by
+        # merging the ancestor lists of the parent nodes.  Storing
+        # this for every node is slightly inefficient, but makes for
+        # simpler code by avoiding the need for a graph traversal when
+        # constructing joint quantities like the ELBO. This could be
+        # optimized if the ancestor lists ever become a performance
+        # bottleneck.
         self.ancestors = set( [self,] + [ancestor for node in self.input_nodes.values() for ancestor in node.ancestors ] )
     
         self._sampled_value = None
@@ -132,6 +135,7 @@ class FlatDistribution(ConditionalDistribution):
 
     
 def construct_elbo(*evidence_nodes):
+
     model_nodes = set([ancestor for node in evidence_nodes for ancestor in node.ancestors])
     expected_likelihoods, entropies = zip(*[node.elbo_term() for node in model_nodes])
     expected_likelihood = tf.reduce_sum(tf.pack(expected_likelihoods))
