@@ -150,7 +150,7 @@ def autoencoder():
 
 def main():
 
-    """
+
     print "gaussian mean estimation"
     obs_node = gaussian_mean_model()
     elbo_terms, posterior = optimize_elbo(obs_node)
@@ -176,7 +176,6 @@ def main():
     obs_node = latent_feature_model()
     elbo_terms, posterior = optimize_elbo(obs_node)
     print_inference_summary(elbo_terms, posterior)
-    """
     
     print "bayesian sparsity"
     obs_node = sparsity()

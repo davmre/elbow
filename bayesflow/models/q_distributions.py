@@ -59,35 +59,7 @@ class DeltaQDistribution(QDistribution):
         return tf.constant(0.0, dtype=tf.float32)
     
 
-class PointwiseTransformedQDistribution(QDistribution):
-    def __init__(self, parent_q, transform, implicit=False):
 
-        
-        super(PointwiseTransformedQDistribution, self).__init__(shape=parent_q.output_shape)
-        self.sample, self.log_jacobian = transform(parent_q.sample)
-
-        # an "implicit" transformation is a formal object associated with a deterministic
-        # transformation in the model, where the parent q distribution is associated with
-        # the untransformed variable. In this case the ELBO expectations are with respect
-        # to the parent Q distribution, so the jacobian of the transformation does not appear.
-        # By contrast, a non-implicit use of a transformed Q distribution would be to create
-        # a new type of distribution (eg, lognormal by exponentiating a Gaussian parent)
-        # that could then itself be associated with stochastic variables in the graph.
-        self.implicit = implicit
-        self.parent_q = parent_q
-        
-    def sample_stochastic_inputs(self):
-        if self.implicit:
-            return {}
-        else:
-            return self.parent_q.sample_stochastic_inputs()
-        
-    def entropy(self):
-        if self.implicit:
-            return tf.constant(0.0, dtype=tf.float32)
-        else:
-            return self.parent_q.entropy() + self.log_jacobian
-        
         
 class GaussianQDistribution(QDistribution):
     
