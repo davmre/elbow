@@ -98,3 +98,139 @@ class NoisyCumulativeSum(ConditionalDistribution):
         reduced_correction = tf.reduce_sum(corrections)
         return reduced_gaussian_lp + reduced_correction
     
+class NoisyLatentFeatures(ConditionalDistribution):
+
+    def __init__(self, B, G, std):
+        super(NoisyLatentFeatures, self).__init__(B=B, G=G, std=std)      
+        
+    def inputs(self):
+        return ("B", "G", "std")
+
+    def _compute_shape(self, B_shape, G_shape, std_shape):
+        N, K = B_shape
+        K2, M = G_shape
+        assert(K == K2)
+        prod_shape = (N, M)                
+        return prod_shape
+    
+    def _compute_dtype(self, B_dtype, G_dtype, std_dtype):
+        assert(G_dtype == std_dtype)
+        return G_dtype
+    
+    def _sample(self, B, G, std):
+        noise = np.asarray(np.random.randn(*self.output_shape), self.dtype) * std
+        return np.asarray(np.dot(B, G), dtype=self.dtype) + noise
+    
+    def _expected_logp(self, q_result, q_B, q_G, q_std):
+        """ 
+        compute E_Q{X, G, B} [ log p(X | G, B) ]
+          where q(G) ~ N(q_G_means, q_G_stds)
+                q(B) ~ Bernoulli(bernoulli_params)
+                q(X) ~ N(q_X_means, q_X_stds)
+                       (a posterior on X representing an upwards message.
+                       In the object-level case the variances are zero)
+          and the model itself is
+              log p(X | G, B) ~ N(X; BG, noise_stds)
+          i.e. each entry of X is modeled as a Gaussian with mean given 
+          by the corresponding entry of ZG, and stddev given by the 
+          corresponding entry of noise_stds. (in principle these can all
+          be different though in practice we will usually have a single
+          global stddev, or perhaps per-column or per-row stddevs). 
+
+
+        Matrix shapes: N datapoints, D dimensions, K latent features
+         X: N x D
+         G: K x D
+         B: N x K
+        """
+
+        
+        std = q_std.sample
+        var = q_result.variance + tf.square(std)
+        X_means = q_result.mean
+        bernoulli_params = q_B.probs
+        
+        expected_X = tf.matmul(bernoulli_params, q_G.mean)
+        precisions = 1.0/var
+        gaussian_lp = bf.dists.gaussian_log_density(X_means, expected_X, variance=var)
+
+        mu2 = tf.square(q_G.mean)
+        tau_V = tf.matmul(bernoulli_params, q_G.variance)
+        tau_tau2_mu2 = tf.matmul(bernoulli_params - tf.square(bernoulli_params), mu2)
+        tmp = tau_V + tau_tau2_mu2
+        lp_correction = tmp * precisions
+
+        pointwise_expected_lp = gaussian_lp - .5*lp_correction 
+        expected_lp = tf.reduce_sum(pointwise_expected_lp)
+
+        return expected_lp
+
+
+class GMMClustering(ConditionalDistribution):
+
+    def __init__(self, weights, centers, std, **kwargs):
+        super(GMMClustering, self).__init__(weights=weights, centers=centers, std=std, **kwargs)   
+
+        self.n_clusters = centers.output_shape[0]
+        
+    def inputs(self):
+        return ("weights", "centers", "std")
+
+    def _compute_shape(self, weights_shape, centers_shape, std_shape):
+        raise Exception("cannot infer shape for GMMClustering, must specify number of cluster draws")
+    
+    def _compute_dtype(self, weights_dtype, centers_dtype, std_dtype):
+        assert(centers_dtype == std_dtype)
+        return centers_dtype
+    
+    def _sample(self, weights, centers, std):
+        noise = np.asarray(np.random.randn(*self.output_shape), self.dtype) * std
+
+        N, D = self.output_shape
+        K = self.n_clusters
+        choices = np.random.choice(np.arange(K), size=(N,),  p=weights)
+        
+        return centers[choices] + noise
+
+    def _logp(self, result, weights, centers, std):
+            
+        total_ps = None
+        # loop over clusters
+        for i, center in enumerate(tf.unpack(centers)):
+            # compute vector of likelihoods that each point could be generated from *this* cluster
+            cluster_lls = tf.reduce_sum(bf.dists.gaussian_log_density(result, center, std), 1)
+
+            # sum these likelihoods, weighted by cluster probabilities
+            cluster_ps = weights[i] * tf.exp(cluster_lls)
+            total_ps = total_ps + cluster_ps if total_ps is not None else cluster_ps
+
+        # finally sum the log probabilities of all points to get a likelihood for the dataset
+        obs_lp = tf.reduce_sum(tf.log(total_ps))
+
+        return obs_lp
+        
+class MultiplicativeGaussianNoise(ConditionalDistribution):    
+
+    def __init__(self, A, std, **kwargs):
+        super(MultiplicativeGaussianNoise, self).__init__(A=A, std=std, **kwargs)   
+
+    def inputs(self):
+        return ("A", "std")
+
+    def _compute_shape(self, A_shape, std_shape):
+        return A_shape
+    
+    def _compute_dtype(self, A_dtype, std_dtype):
+        assert(A_dtype == std_dtype)
+        return A_dtype
+    
+    def _sample(self, A, std):
+        noise = np.asarray(np.random.randn(*self.output_shape), self.dtype) * std
+        return A * noise
+
+    def _logp(self, result, A, std):
+            
+        residuals = result / A
+        lp = tf.reduce_sum(bf.dists.gaussian_log_density(residuals, 0.0, std))
+        return lp
+
