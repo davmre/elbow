@@ -66,6 +66,25 @@ def gaussian_entropy(stddev=None, variance=None):
     entropy = tf.reduce_sum(t)
     return entropy
 
+def gaussian_cross_entropy(mean_p, variance_p, mean_q, variance_q):
+    # E_p [ log q(x) ]
+    gaussian_lp = gaussian_log_density(mean_p, mean = mean_q, variance=variance_q)
+    correction = -.5 * variance_p
+    return gaussian_lp + correction
+
+def gaussian_kl(mu_p, sigma2_p, mu_q=None, sigma2_q=None):
+
+    if mu_q is None and sigma2_q is None:
+        # assume standard normal
+        kl = .5 * (tf.square(mu_p) + sigma2_p - 1.0 - tf.log(sigma2_p))
+    else:
+        logsp = tf.log(sigma2_p, name="logsp")
+        logsq =  tf.log(sigma2_q, name="logsq")
+        kl = .5 * (tf.square(mu_p - mu_q)/sigma2_q + sigma2_p/sigma2_q - 1.0 - logsp + logsq)
+        
+    return kl
+
+
 def gaussian_log_density(x, mean=None, stddev=None, variance=None):
     """Creates a TensorFlow variable representing the sum of one or more
     independent Gaussian log-densities.
@@ -97,17 +116,6 @@ def gaussian_log_density(x, mean=None, stddev=None, variance=None):
     lps = -0.5 * z   - .5 * tf.log(2*np.pi * variance)
     return lps
 
-def gaussian_kl(mu_p, sigma2_p, mu_q=None, sigma2_q=None):
-
-    if mu_q is None and sigma2_q is None:
-        # assume standard normal
-        kl = .5 * (tf.square(mu_p) + sigma2_p - 1.0 - tf.log(sigma2_p))
-    else:
-        logsp = tf.log(sigma2_p, name="logsp")
-        logsq =  tf.log(sigma2_q, name="logsq")
-        kl = .5 * (tf.square(mu_p - mu_q)/sigma2_q + sigma2_p/sigma2_q - 1.0 - logsp + logsq)
-        
-    return kl
 
 def inv_gamma_log_density(x, alpha, beta):
     """Creates a TensorFlow variable representing the sum of one or more
@@ -198,6 +206,22 @@ def beta_log_density(x, alpha=1.0, beta=1.0):
     log_density = (alpha - 1) * tf.log(x) + (beta-1) * tf.log(1-x) - log_z
     return log_density
 
+def multinomial_entropy(p, cross_q=None, clip_finite=True):
+    # compute the (cross) entropy of a probability vector vs another
+
+    if cross_q is None:
+        cross_q = p
+    
+    if clip_finite:
+        lq = tf.log(tf.clip_by_value(cross_q, 1e-45, 1.0), name="multinomial_logq")
+        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-45, 1.0), name="multinomial_log1q")
+    else:
+        lq = tf.log(cross_q, name="multinomial_logq")
+        lq1 = tf.log(1.0-cross_q, name="multinomial_log1q")
+
+    entropy = -tf.reduce_sum(p * lq, axis=1)
+    return entropy
+    
 def bernoulli_entropy(p, cross_q=None, clip_finite=True):
     # compute the entropy of a (tensor of independent) bernoulli distribution with probabilities p,
     # or optionally the cross-entropy with respect to another distribution with probabilities cross_q. 
@@ -206,14 +230,15 @@ def bernoulli_entropy(p, cross_q=None, clip_finite=True):
         cross_q = p
     
     if clip_finite:
-        lq = tf.log(tf.clip_by_value(cross_q, 1e-45, 1.0), name="bernoulli_logp")
-        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-45, 1.0), name="bernoulli_log1p")
+        lq = tf.log(tf.clip_by_value(cross_q, 1e-45, 1.0), name="bernoulli_logq")
+        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-45, 1.0), name="bernoulli_log1q")
     else:
-        lq = tf.log(cross_q, name="bernoulli_logp")
-        lq1 = tf.log(1.0-cross_q, name="bernoulli_log1p")
+        lq = tf.log(cross_q, name="bernoulli_logq")
+        lq1 = tf.log(1.0-cross_q, name="bernoulli_log1q")
 
     entropy = -p * lq - (1.0-p) * lq1
-
+    return entropy
+    
 def bernoulli_kl(p, q, clip_finite=True):
 
     if clip_finite:
@@ -244,4 +269,4 @@ def bernoulli_log_density(x, p, clip_finite=True):
     log_probs = tf.mul(x, lp) + tf.mul(1-x, lp1)
     return log_probs
     
-
+    
