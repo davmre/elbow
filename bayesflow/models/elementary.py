@@ -31,6 +31,61 @@ class GammaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
+class BetaMatrix(ConditionalDistribution):
+    
+    def __init__(self, alpha, beta, **kwargs):
+        super(BetaMatrix, self).__init__(alpha=alpha, beta=beta, **kwargs)
+    
+    def inputs(self):
+        return ("alpha", "beta")
+    
+    def _sample(self, alpha, beta):
+        return np.asarray(scipy.stats.beta(a=alpha, b=beta).rvs(*self.output_shape), dtype=self.dtype)
+
+    def _logp(self, result, alpha, beta):    
+        lp = tf.reduce_sum(bf.dists.beta_log_density(result, alpha, beta))
+        return lp
+
+    def _compute_shape(self, alpha_shape, beta_shape):
+        return bf.util.broadcast_shape(alpha_shape, beta_shape)
+        
+    def _compute_dtype(self, alpha_dtype, beta_dtype):
+        assert(alpha_dtype==beta_dtype)
+        return alpha_dtype
+
+class DirichletMatrix(ConditionalDistribution):
+    """
+    Currently just describes a vector of shape (K,), though could be extended to 
+    a (N, K) matrix of iid draws. 
+    """
+    
+    def __init__(self, alpha, **kwargs):
+        super(DirichletMatrix, self).__init__(alpha=alpha, **kwargs)
+        self.K = self.output_shape[0]
+        
+    def inputs(self):
+        return ("alpha",)
+    
+    def _sample(self, alpha):
+        try:
+            alpha[self.K-1]
+        except:
+            alpha = np.ones((self.K,)) * alpha
+            
+        return np.asarray(scipy.stats.dirichlet(alpha=alpha).rvs(1), dtype=self.dtype).flatten()
+
+    def _logp(self, result, alpha):    
+        lp = tf.reduce_sum(bf.dists.dirichlet_log_density(result, alpha))
+        return lp
+
+    def _compute_shape(self, alpha_shape):        
+        return alpha_shape
+        
+    def _compute_dtype(self, alpha_dtype):
+        return alpha_dtype
+
+
+    
 class BernoulliMatrix(ConditionalDistribution):
     def __init__(self, p, **kwargs):
         super(BernoulliMatrix, self).__init__(p=p, **kwargs)        

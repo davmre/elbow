@@ -2,55 +2,16 @@ import numpy as np
 import tensorflow as tf
 
 from bayesflow.special_hacks import gammaln, betaln
+from bayesflow.util import extract_shape
 import scipy.special
 
-def _get_vector_dimension(*args):
-    """Computes the dimension to broadcast a set of arguments to.
-       
-    Args:
-        *args: each argument is a Python or TensorFlow vector or scalar, or None.
 
-    Returns:
-        d: the length common to all input vectors, if such exists. If all inputs are scalars           or None, returns 1. 
-
-    Raises:
-        ValueError: if inputs have incompatible dimensions, or if any input is invalid. 
-    """
-
-    d = None
-    for arg in args:
-        if arg is None:
-            continue
-
-        if isinstance(arg, tf.Tensor):
-            dims = arg.get_shape().dims
-            if len(dims) == 0: # is a scalar
-                continue
-            elif len(dims) == 1:
-                d_arg = dims[0].value
-            else:
-                raise ValueError("trying to get vector dimension of higher-order tensor %s" % repr(arg))
-        else: # this is a Python object of some sort
-            try:
-                d_arg = len(d)
-            except TypeError:
-                # assume this means scalar
-                continue
-            
-        if d is not None and d_arg != d:
-            raise ValueError("vectors of incompatible dimensions %d and %d" % d, d_arg)
-        d = d_arg
-    
-    if d is None:
-        d = 1
-
-    return d
     
 def gaussian_entropy(stddev=None, variance=None):
     """Creates a TensorFlow variable representing the sum of one or more
     Gaussian entropies.
 
-    Args:
+    Args:v
         stddev (optional, vector or scalar): mutually exclusive with variance
         variance (optional, vector or scalar): mutually exclusive with stddev
 
@@ -201,6 +162,27 @@ def gamma_log_density(x, alpha, beta, parameterization=None):
     lps = l1 + l2 + l3 - l4
     return lps
 
+def dirichlet_log_density(x, alpha, clip_finite=True):
+    """
+    Assumes that x is a vector, and alpha is a vector of the same length. 
+
+    WARNING: does not enforce sum(x)==1; bad things will happen if this is violated. 
+
+    """
+    
+    if clip_finite:
+        logx = tf.log(tf.clip_by_value(x, 1e-45, 1.0), name="dirichlet_logx")
+    else:
+        logx = tf.log(x, name="dirichlet_logx")
+
+    # force broadcasting alpha 
+    if alpha.get_shape() != x.get_shape():
+        alpha = tf.zeros_like(x) + alpha
+
+    log_z = tf.reduce_sum(gammaln(alpha)) - gammaln(tf.reduce_sum(alpha))
+    log_density = (alpha - 1) * logx - log_z
+    return log_density
+    
 def beta_log_density(x, alpha=1.0, beta=1.0):
     log_z = betaln(alpha, beta)
     log_density = (alpha - 1) * tf.log(x) + (beta-1) * tf.log(1-x) - log_z

@@ -5,10 +5,10 @@ import bayesflow as bf
 import bayesflow.util as util
 
 from bayesflow.models import FlatDistribution
-from bayesflow.models.elementary import GaussianMatrix, BernoulliMatrix
-from bayesflow.models.q_distributions import DeltaQDistribution, BernoulliQDistribution
+from bayesflow.models.elementary import GaussianMatrix, BernoulliMatrix, BetaMatrix, DirichletMatrix
+from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution
 from bayesflow.models.matrix_decompositions import *
-from bayesflow.models.transforms import PointwiseTransformedMatrix
+from bayesflow.models.transforms import PointwiseTransformedMatrix, PointwiseTransformedQDistribution
 from bayesflow.models.neural import VAEEncoder, VAEDecoderBernoulli, init_weights, init_zero_vector
 from bayesflow.models.train import optimize_elbo, print_inference_summary
 
@@ -55,8 +55,14 @@ def clustering_gmm_model(n_clusters = 4,
 
     centers = GaussianMatrix(mean=0.0, std=cluster_center_std, output_shape=(n_clusters, dim), name="centers")
 
-    uniform_weights = np.float32(np.ones((n_clusters,)) / float(n_clusters))
-    weights = FlatDistribution(value=uniform_weights, fixed=False, name="weights")
+    weights = DirichletMatrix(alpha=1.0,
+                              output_shape=(n_clusters,),
+                              name="weights")
+
+    q1 = GaussianQDistribution(shape=(n_clusters,))
+    qweights = PointwiseTransformedQDistribution(q1, bf.transforms.simplex)
+    weights.attach_q(qweights)
+
     X = GMMClustering(weights=weights, centers=centers,
                       std=cluster_spread_std, output_shape=(n_points, dim), name="noise")
 
@@ -65,13 +71,6 @@ def clustering_gmm_model(n_clusters = 4,
 
     q_centers = centers.attach_gaussian_q()
 
-    # TODO build a smarter approach for Q distributions in a transformed space
-    tf_unnorm_weights = tf.Variable(np.float32(np.zeros((n_clusters,))), name="unnorm_weights")
-    tf_weights, _ = bf.transforms.simplex(tf_unnorm_weights)
-    q_weights = DeltaQDistribution(tf_weights)
-    weights.attach_q(q_weights)
-
-
     return X
 
 def latent_feature_model():
@@ -79,8 +78,13 @@ def latent_feature_model():
     D = 10
     N = 100
 
-    pi = np.float32(np.random.rand(K))
+    a, b = np.float32(1.0), np.float32(1.0)
 
+    pi = BetaMatrix(alpha=a, beta=b, output_shape=(K,), name="pi")
+    q1 = GaussianQDistribution(shape=(K,))
+    qpi = PointwiseTransformedQDistribution(q1, bf.transforms.logit)
+    pi.attach_q(qpi)
+    
     B = BernoulliMatrix(p=pi, output_shape=(N, K), name="B")
     G = GaussianMatrix(mean=0.0, std=1.0, output_shape=(K, D), name="G")
     D = NoisyLatentFeatures(B=B, G=G, std=0.1, name="noise")
@@ -166,17 +170,19 @@ def main():
     obs_node = gaussian_randomwalk_model()
     elbo_terms, posterior = optimize_elbo(obs_node)
     print_inference_summary(elbo_terms, posterior)
+
     
     print "gaussian mixture model"
     obs_node = clustering_gmm_model()
     elbo_terms, posterior = optimize_elbo(obs_node)
     print_inference_summary(elbo_terms, posterior)
-
+    
     print "latent features"
     obs_node = latent_feature_model()
-    elbo_terms, posterior = optimize_elbo(obs_node)
+    elbo_terms, posterior = optimize_elbo(obs_node, steps=300)
     print_inference_summary(elbo_terms, posterior)
-    
+
+
     print "bayesian sparsity"
     obs_node = sparsity()
     elbo_terms, posterior = optimize_elbo(obs_node)

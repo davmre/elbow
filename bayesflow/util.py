@@ -19,8 +19,3 @@ def extract_shape(t):
         shape = ()
     return shape
 
-
-def as_tf_constant(x):
-    """
-    If we 
-    """
