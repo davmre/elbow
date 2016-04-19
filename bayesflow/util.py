@@ -19,3 +19,6 @@ def extract_shape(t):
         shape = ()
     return shape
 
+def logsumexp(x1, x2):
+    shift = tf.maximum(x1, x2)
+    return tf.log(tf.exp(x1 - shift) + tf.exp(x2-shift)) + shift

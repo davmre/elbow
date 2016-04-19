@@ -192,7 +192,7 @@ class NoisyLatentFeatures(ConditionalDistribution):
 class GMMClustering(ConditionalDistribution):
 
     def __init__(self, weights, centers, std, **kwargs):
-        super(GMMClustering, self).__init__(weights=weights, centers=centers, std=std, **kwargs)   
+        super(GMMClustering, self).__init__(weights=weights, centers=centers, std=std, **kwargs)
 
         self.n_clusters = centers.output_shape[0]
         
@@ -216,20 +216,25 @@ class GMMClustering(ConditionalDistribution):
         return centers[choices] + noise
 
     def _logp(self, result, weights, centers, std):
-            
-        total_ps = None
+
+        
+        total_logps = None
+        
         # loop over clusters
         for i, center in enumerate(tf.unpack(centers)):
             # compute vector of likelihoods that each point could be generated from *this* cluster
             cluster_lls = tf.reduce_sum(bf.dists.gaussian_log_density(result, center, std), 1)
 
             # sum these likelihoods, weighted by cluster probabilities
-            cluster_ps = weights[i] * tf.exp(cluster_lls)
-            total_ps = total_ps + cluster_ps if total_ps is not None else cluster_ps
-
+            cluster_logps = tf.log(weights[i]) + cluster_lls
+            if total_logps is not None:
+                total_logps = util.logsumexp(total_logps, cluster_logps)
+            else:
+                total_logps = cluster_logps
+            
         # finally sum the log probabilities of all points to get a likelihood for the dataset
-        obs_lp = tf.reduce_sum(tf.log(total_ps))
-
+        obs_lp = tf.reduce_sum(total_logps)
+        
         return obs_lp
 
     def elbo_term(self, symmetry_correction_hack=True):
