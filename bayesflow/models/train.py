@@ -61,7 +61,7 @@ def construct_elbo(*evidence_nodes):
 
     return elbo, sample_stochastic_inputs, decompose_elbo, inspect_posterior
 
-def optimize_elbo(node, steps=200, adam_rate=0.1):
+def optimize_elbo(node, steps=200, adam_rate=0.1, debug=False, return_session=False):
     """
     Convenience function to optimize an ELBO and return the breakdown of the final bound as well
     as the estimated posterior. 
@@ -77,21 +77,33 @@ def optimize_elbo(node, steps=200, adam_rate=0.1):
                                 
     init = tf.initialize_all_variables()
 
+    if debug:
+        debug_ops = tf.add_check_numerics_ops()
+
+    
     sess = tf.Session()
     sess.run(init)
     for i in range(steps):
         fd = sample_stochastic()
+
+        if debug:
+            sess.run(debug_ops, feed_dict = fd)
+
         sess.run(train_step, feed_dict = fd)
+        
         elbo_val = sess.run((elbo), feed_dict=fd)
         print i, elbo_val
+
         
-        fd = sample_stochastic()
-        elbo_terms = decompose_elbo(sess, fd)
-        posterior = inspect_posterior(sess, fd)
-        
-    sess.close()
-        
-    return elbo_terms, posterior
+    fd = sample_stochastic()    
+    elbo_terms = decompose_elbo(sess, fd)
+    posterior = inspect_posterior(sess, fd)
+
+    if return_session:
+        return elbo_terms, posterior, sess, fd
+    else:
+        sess.close()
+        return elbo_terms, posterior
 
 def print_inference_summary(elbo_terms, posterior):
     """
