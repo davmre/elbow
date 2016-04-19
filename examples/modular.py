@@ -12,6 +12,12 @@ from bayesflow.models.transforms import PointwiseTransformedMatrix, PointwiseTra
 from bayesflow.models.neural import VAEEncoder, VAEDecoderBernoulli, init_weights, init_zero_vector
 from bayesflow.models.train import optimize_elbo, print_inference_summary
 
+"""
+Examples / test cases for a new API allowing construction of
+models and inference routines from modular components.
+"""
+
+
 def gaussian_mean_model():
     mu = GaussianMatrix(mean=0, std=10, output_shape=(1,))
     q_mu = mu.attach_gaussian_q()
