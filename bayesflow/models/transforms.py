@@ -33,18 +33,34 @@ class DeterministicTransform(ConditionalDistribution):
     def _compute_dtype(self, A_dtype):
         return A_dtype
 
-    def attach_q(self):
+    def attach_q(self, qdist):
         raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
 
     
 class TransposeQDistribution(QDistribution):
     def __init__(self, parent_q):
-
+        N, D = parent_q.output_shape
+        transposed_shape = (D, N)
+        self.parent_q = parent_q
         
-        super(PointwiseTransformedQDistribution, self).__init__(shape=parent_q.output_shape)
+        super(TransposeQDistribution, self).__init__(shape=transposed_shape)
 
-        for param in self.params():
+        for param in parent_q.params():
             self.__dict__[param] = tf.transpose(parent_q.__dict__[param])
+
+        # HACKS
+        try:
+            self.variance = tf.transpose(parent_q.variance)
+        except:
+            pass
+        try:
+            self.stddev = tf.transpose(parent_q.stddev)
+        except:
+            pass
+        try:
+            self.mean = tf.transpose(parent_q.mean)
+        except:
+            pass
         
     def sample_stochastic_inputs(self):
         return self.parent_q.sample_stochastic_inputs()
@@ -61,7 +77,19 @@ class Transpose(DeterministicTransform):
     
     def _compute_shape(self, A_shape):
         N, D = A_shape
-        return (D, A)
+        return (D, N)
+
+    def attach_q(self, qdist):
+        """
+        Try to attach a transformed Q to the parent instead...
+        """
+
+        parent = self.input_nodes["A"]
+        parent_q = TransposeQDistribution(qdist)
+        parent.attach_q(parent_q)
+
+        self.q_distribution = qdist
+        
         
     def __getattr__(self, name):
         # hack to generate the Q distribution when it's first requested. we can't do this at initialization
