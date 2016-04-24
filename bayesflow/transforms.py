@@ -37,9 +37,10 @@ def exp(x, clip_finite=True):
         transformed = np.exp(x)
         log_jacobian = np.sum(x)
     else:
-        transformed = tf.exp(x)
         if clip_finite:
             x = tf.clip_by_value(x, -88, 88, name="clipped_exp_input")
+
+        transformed = tf.exp(x)
         log_jacobian = tf.reduce_sum(x)
 
     return transformed, log_jacobian
@@ -98,4 +99,16 @@ def chain_transforms(*args):
 reciprocal_sqrt = chain_transforms(reciprocal, sqrt)
 reciprocal_square = chain_transforms(reciprocal, square)
 exp_reciprocal = chain_transforms(exp, reciprocal)
-simplex = chain_transforms(exp, normalize)
+simplex_raw = chain_transforms(exp, normalize)
+
+def simplex(x):
+    # result is invariant to shifting the (logspace) input,
+    # so we choose a shift to avoid overflow
+    
+    if isinstance(x, np.ndarray):
+        xmax = np.max(x)
+    else:
+        xmax = tf.reduce_max(x)
+    return simplex_raw(x - xmax)
+    
+
