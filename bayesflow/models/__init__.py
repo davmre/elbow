@@ -64,7 +64,9 @@ class ConditionalDistribution(object):
     
         self._sampled_value = None
         self._sampled_value_seed = None
-            
+
+        self._q_distribution = None
+        
     def sample(self, seed=0):
         
         if seed != self._sampled_value_seed:
@@ -80,32 +82,13 @@ class ConditionalDistribution(object):
         
         return self._sampled_value
     
-    def attach_q(self, q_distribution):
-        # TODO check that the types and shape of the Q distribution match
-
-        if "q_distribution" in self.__dict__ and self.q_distribution is not None:
-            raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self.q_distribution, self, self.q_distribution))
-
-        assert(self.output_shape == q_distribution.output_shape)
-        
-        self.q_distribution = q_distribution
-    
-    def observe(self, observed_val):
-        qdist = ObservedQDistribution(observed_val)
-        self.attach_q(qdist)
-        return qdist
-        
-    def attach_gaussian_q(self, **kwargs):
-        q = GaussianQDistribution(shape=self.output_shape, **kwargs)
-        self.attach_q(q)
-        return q
-    
     def elbo_term(self):
-        input_qs = {"q_"+name: node.q_distribution for (name,node) in self.input_nodes.items()}
-        with tf.name_scope(self.name + "_Elogp") as scope:
-            expected_lp = self._expected_logp(q_result = self.q_distribution, **input_qs)
+        input_qs = {"q_"+name: node.q_distribution() for (name,node) in self.input_nodes.items()}
 
-        entropy = self.q_distribution.entropy()
+        q = self.q_distribution()
+        with tf.name_scope(self.name + "_Elogp") as scope:
+            expected_lp = self._expected_logp(q_result = q, **input_qs)
+        entropy = q.entropy()
         return expected_lp, entropy
 
     def _expected_logp(self, **kwargs):
@@ -119,6 +102,35 @@ class ConditionalDistribution(object):
 
     def __str__(self):
         return self.name + "_" + str(type(self))
+
+    def q_distribution(self):
+        
+        if self._q_distribution is None:
+            default_q = self.default_q()
+
+            # explicitly use the superclass method since some subclasses
+            # may redefine attach_q to prevent user-attached q's
+            ConditionalDistribution.attach_q(self, default_q)
+            
+        return self._q_distribution
+    
+    def attach_q(self, q_distribution):
+        # TODO check that the types and shape of the Q distribution match
+
+        if self._q_distribution is not None:
+            raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
+
+        assert(self.output_shape == q_distribution.output_shape)
+        
+        self._q_distribution = q_distribution
+    
+    def observe(self, observed_val):
+        qdist = ObservedQDistribution(observed_val)
+        self.attach_q(qdist)
+        return qdist
+
+    def default_q(self):
+        raise Exception("default Q distribution not implemented!")
     
 class FlatDistribution(ConditionalDistribution):
 

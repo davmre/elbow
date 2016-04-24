@@ -33,7 +33,7 @@ def construct_elbo(*evidence_nodes):
         expected_likelihoods.append(elogp)
         entropies.append(entropy)
         
-        qdist = node.q_distribution
+        qdist = node.q_distribution()
         node_posteriors[node.name] = qdist.params()
         
     expected_likelihood = tf.reduce_sum(tf.pack(expected_likelihoods))
@@ -55,7 +55,7 @@ def construct_elbo(*evidence_nodes):
                 variables[name][param_name] = session.run(param_tensor, feed_dict=feed_dict)
         return variables
 
-    q_distributions = set([node.q_distribution for node in model_nodes])
+    q_distributions = set([node.q_distribution() for node in model_nodes])
     def sample_stochastic_inputs():
         return {var: val for qdist in q_distributions for (var, val) in qdist.sample_stochastic_inputs().items()}
 

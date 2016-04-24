@@ -5,6 +5,8 @@ import bayesflow as bf
 import bayesflow.util as util
 
 from bayesflow.models import ConditionalDistribution
+from bayesflow.models.q_distributions import GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
+from bayesflow.models.transforms import PointwiseTransformedQDistribution
 
 import scipy.stats
 
@@ -31,6 +33,10 @@ class GammaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
+    def default_q(self):
+        q1 = GaussianQDistribution(shape=self.output_shape)
+        return PointwiseTransformedQDistribution(q1, bf.transforms.exp)
+    
 class BetaMatrix(ConditionalDistribution):
     
     def __init__(self, alpha, beta, **kwargs):
@@ -53,6 +59,10 @@ class BetaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
+    def default_q(self):
+        q1 = GaussianQDistribution(shape=self.output_shape)
+        return PointwiseTransformedQDistribution(q1, bf.transforms.logit)
+    
 class DirichletMatrix(ConditionalDistribution):
     """
     Currently just describes a vector of shape (K,), though could be extended to 
@@ -84,7 +94,9 @@ class DirichletMatrix(ConditionalDistribution):
     def _compute_dtype(self, alpha_dtype):
         return alpha_dtype
 
-
+    def default_q(self):
+        return SimplexQDistribution(self.K)
+    
     
 class BernoulliMatrix(ConditionalDistribution):
     def __init__(self, p, **kwargs):
@@ -116,6 +128,9 @@ class BernoulliMatrix(ConditionalDistribution):
         
     def _compute_dtype(self, p_dtype):
         return np.int32
+
+    def default_q(self):
+        return BernoulliQDistribution(shape=self.output_shape)
     
     
 class MultinomialMatrix(ConditionalDistribution):
@@ -178,3 +193,5 @@ class GaussianMatrix(ConditionalDistribution):
         assert(mean_dtype==std_dtype)
         return mean_dtype
         
+    def default_q(self):
+        return GaussianQDistribution(shape=self.output_shape)

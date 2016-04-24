@@ -20,8 +20,6 @@ models and inference routines from modular components.
 
 def gaussian_mean_model():
     mu = GaussianMatrix(mean=0, std=10, output_shape=(1,))
-    q_mu = mu.attach_gaussian_q()
-    
     X = GaussianMatrix(mean=mu, std=1, output_shape=(100,))
 
     sampled_X = X.sample(seed=2)
@@ -37,9 +35,6 @@ def gaussian_lowrank_model():
     sampled_C = C.sample(seed=0)
     C.observe(sampled_C)
 
-    q_A = A.attach_gaussian_q()
-    q_B = B.attach_gaussian_q()
-
     return C
     
 def gaussian_randomwalk_model():
@@ -48,8 +43,6 @@ def gaussian_randomwalk_model():
 
     sampled_C = C.sample(seed=0)
     C.observe(sampled_C)
-
-    q_A = A.attach_gaussian_q()
 
     return C
 
@@ -66,16 +59,11 @@ def clustering_gmm_model(n_clusters = 4,
                               name="weights")
 
 
-    qweights = SimplexQDistribution(n_clusters)
-    weights.attach_q(qweights)
-
     X = GMMClustering(weights=weights, centers=centers,
                       std=cluster_spread_std, output_shape=(n_points, dim), name="noise")
 
     sampled_X = X.sample(seed=0)
     X.observe(sampled_X)
-
-    q_centers = centers.attach_gaussian_q()
 
     return X
 
@@ -87,20 +75,12 @@ def latent_feature_model():
     a, b = np.float32(1.0), np.float32(1.0)
 
     pi = BetaMatrix(alpha=a, beta=b, output_shape=(K,), name="pi")
-    q1 = GaussianQDistribution(shape=(K,))
-    qpi = PointwiseTransformedQDistribution(q1, bf.transforms.logit)
-    pi.attach_q(qpi)
-    
     B = BernoulliMatrix(p=pi, output_shape=(N, K), name="B")
     G = GaussianMatrix(mean=0.0, std=1.0, output_shape=(K, D), name="G")
     D = NoisyLatentFeatures(B=B, G=G, std=0.1, name="noise")
 
     sampled_D = D.sample(seed=0)
     D.observe(sampled_D)
-
-    q_G = G.attach_gaussian_q()
-    q_B = BernoulliQDistribution(shape=(N, K))
-    B.attach_q(q_B)
 
     return D
 
@@ -113,8 +93,6 @@ def sparsity():
     sampled_X = X.sample()
     X.observe(sampled_X)
 
-    q_G1 = G1.attach_gaussian_q()
-    
     return X
 
 def autoencoder():

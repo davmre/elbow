@@ -88,20 +88,13 @@ class Transpose(DeterministicTransform):
         parent_q = TransposeQDistribution(qdist)
         parent.attach_q(parent_q)
 
-        self.q_distribution = qdist
+        self._q_distribution = qdist
+        #super(Transpose, self).attach_q(qdist)
         
+    def default_q(self):            
+        parent_q = self.input_nodes["A"].q_distribution()
+        return TransposeQDistribution(parent_q)
         
-    def __getattr__(self, name):
-        # hack to generate the Q distribution when it's first requested. we can't do this at initialization
-        # time since the parent might not have a Q distribution attached yet.
-        
-        if name=="q_distribution":
-            parent_q = self.input_nodes["A"].q_distribution
-            self.q_distribution = TransposeQDistribution(parent_q)
-            return self.q_distribution
-
-        raise AttributeError(name)
-
 
 class PointwiseTransformedQDistribution(QDistribution):
     def __init__(self, parent_q, transform, implicit=False):
@@ -146,17 +139,9 @@ class PointwiseTransformedMatrix(DeterministicTransform):
         tA, _ = self.transform(A)
         return tA
     
-    def attach_q(self):
+    def attach_q(self, qdist):
         raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
 
-    def __getattr__(self, name):
-        # hack to generate the Q distribution when it's first requested. we can't do this at initialization
-        # time since the parent might not have a Q distribution attached yet.
-        
-        if name=="q_distribution":
-            parent_q = self.input_nodes["A"].q_distribution
-            self.q_distribution = PointwiseTransformedQDistribution(parent_q, self.transform, implicit=True)
-            return self.q_distribution
-
-        raise AttributeError(name)
-                
+    def default_q(self):
+        parent_q = self.input_nodes["A"].q_distribution()
+        return PointwiseTransformedQDistribution(parent_q, self.transform, implicit=True)

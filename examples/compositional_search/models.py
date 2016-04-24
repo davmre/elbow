@@ -29,10 +29,6 @@ def build_column_stds(shape, settings, name):
     std = PointwiseTransformedMatrix(prec, bf.transforms.reciprocal_sqrt,
                                      name="%s_std" % name)
 
-    q1 = GaussianQDistribution(shape=(prec_dim,))
-    qprecs = PointwiseTransformedQDistribution(q1, bf.transforms.exp)
-    prec.attach_q(qprecs)
-
     return std
     
 def build_gaussian(shape, settings, name):
@@ -49,13 +45,7 @@ def build_bernoulli(shape, settings, name):
     a, b = settings.beta_prior_params
     
     pi = BetaMatrix(alpha=a, beta=b, output_shape=(K,), name="%s_pi" % name)
-    q1 = GaussianQDistribution(shape=(K,))
-    qpi = PointwiseTransformedQDistribution(q1, bf.transforms.logit)
-    pi.attach_q(qpi)
-
     B = BernoulliMatrix(p=pi, output_shape=(N, K), name=name)
-    q_B = BernoulliQDistribution(shape=(N, K))
-    B.attach_q(q_B)
 
     return B
 
@@ -72,28 +62,21 @@ def build_noise_std(settings, name):
                                 dtype=np.float32, name="%s_noise_precs" % name)
         noisestd = PointwiseTransformedMatrix(noiseprec, bf.transforms.reciprocal_sqrt,
                                               name="%s_noise_std" % name)
-        q1 = GaussianQDistribution(shape=(1,))
-        qprecs = PointwiseTransformedQDistribution(q1, bf.transforms.exp)
-        noiseprec.attach_q(qprecs)
-        
+                
     return noisestd
 
 def build_lowrank(G1, G2, settings, name):
     noise_std = build_noise_std(settings, name)
-    G1.attach_gaussian_q()
-    G2.attach_gaussian_q()
     return NoisyGaussianMatrixProduct(G1, G2, noise_std, name=name)
 
 def build_features(B, G, settings, name):
     noise_std = build_noise_std(settings, name)
 
-    # assume B already has a Q attached, since it can't exist in isolation
-    G.attach_gaussian_q()
     return NoisyLatentFeatures(B, G, noise_std, name=name)
 
 def build_chain(G, settings, name):
     noise_std = build_noise_std(settings, name)
-    G.attach_gaussian_q()
+
     return NoisyCumulativeSum(G, noise_std, name=name)
 
 def build_sparsity(G, settings, name):
@@ -112,11 +95,6 @@ def build_clustering(centers, shape, settings, name):
                               name="%s_weights" % name)
 
 
-    qweights = SimplexQDistribution(K)
-    weights.attach_q(qweights)
-
-    q_centers = centers.attach_gaussian_q()
-    
     noise_std = build_noise_std(settings, name)
     return GMMClustering(weights=weights, centers=centers,
                          std=noise_std, output_shape=shape, name=name)
@@ -188,7 +166,7 @@ def main():
     
     settings = ExperimentSettings()
     
-    structures = list(list_structures(1))[5:6]
+    structures = list(list_structures(1))
     for structure in structures:
         m = build_model(structure, (N, D), settings)
         print "built model for structure", repr(structure)
