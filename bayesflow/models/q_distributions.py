@@ -70,8 +70,8 @@ class GaussianQDistribution(QDistribution):
         init_log_stddev = np.float32(np.ones(shape) * -10)
         self.mean = tf.Variable(init_mean, name="mean")
         self.log_stddev = tf.Variable(init_log_stddev, name="log_stddev")
-        self.stddev = tf.exp(self.log_stddev)
-        self.variance = tf.square(self.stddev)        
+        self.stddev = tf.exp(tf.clip_by_value(self.log_stddev, -42, 42))
+        self.variance = tf.square(self.stddev)
         self.stochastic_eps = tf.placeholder(dtype=self.mean.dtype, shape=shape, name="eps")
         self.sample = self.stochastic_eps * self.stddev + self.mean        
 
@@ -112,5 +112,33 @@ class BernoulliQDistribution(QDistribution):
         sampled_eps = np.random.rand(*self.output_shape)
         return {self.stochastic_eps : sampled_eps}
     
+    def entropy(self):
+        return self._entropy
+
+class SimplexQDistribution(QDistribution):
+    # define a distribution on the simplex as a transform of an
+    # (n-1)-dimensional Gaussian
+    
+    def __init__(self, n, monte_carlo_entropy=True):
+        super(SimplexQDistribution, self).__init__(shape=(n,))
+        self.n = n
+        
+        if n > 1:
+            self.gaussian_q = GaussianQDistribution(shape=(n-1,), monte_carlo_entropy=monte_carlo_entropy)
+            self._simplex_input = tf.concat(0, [self.gaussian_q.sample, tf.zeros((1,), dtype=tf.float32)])
+            self.sample, self.log_jacobian = bf.transforms.simplex(self._simplex_input)
+                    
+            self._entropy = self.gaussian_q.entropy() + self.log_jacobian
+        else:
+            self.gaussian_q = None
+            self.sample = tf.ones((1,))
+            self._entropy = tf.constant(0.0)
+                
+    def sample_stochastic_inputs(self):
+        if self.gaussian_q is not None:
+            return self.gaussian_q.sample_stochastic_inputs()
+        else:
+            return {}
+        
     def entropy(self):
         return self._entropy

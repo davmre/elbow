@@ -6,7 +6,7 @@ import bayesflow.util as util
 
 from bayesflow.models import FlatDistribution
 from bayesflow.models.elementary import GaussianMatrix, BernoulliMatrix, BetaMatrix, DirichletMatrix
-from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution
+from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
 from bayesflow.models.matrix_decompositions import *
 from bayesflow.models.transforms import PointwiseTransformedMatrix, PointwiseTransformedQDistribution
 from bayesflow.models.neural import VAEEncoder, VAEDecoderBernoulli, init_weights, init_zero_vector
@@ -65,8 +65,8 @@ def clustering_gmm_model(n_clusters = 4,
                               output_shape=(n_clusters,),
                               name="weights")
 
-    q1 = GaussianQDistribution(shape=(n_clusters,))
-    qweights = PointwiseTransformedQDistribution(q1, bf.transforms.simplex)
+
+    qweights = SimplexQDistribution(n_clusters)
     weights.attach_q(qweights)
 
     X = GMMClustering(weights=weights, centers=centers,

@@ -6,7 +6,7 @@ import bayesflow.util as util
 
 from bayesflow.models import FlatDistribution
 from bayesflow.models.elementary import GaussianMatrix, BernoulliMatrix, GammaMatrix, BetaMatrix, DirichletMatrix
-from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution
+from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
 from bayesflow.models.matrix_decompositions import *
 from bayesflow.models.transforms import PointwiseTransformedMatrix, PointwiseTransformedQDistribution, Transpose
 
@@ -111,8 +111,8 @@ def build_clustering(centers, shape, settings, name):
                               output_shape=(K,),
                               name="%s_weights" % name)
 
-    q1 = GaussianQDistribution(shape=(K,))
-    qweights = PointwiseTransformedQDistribution(q1, bf.transforms.simplex)
+
+    qweights = SimplexQDistribution(K)
     weights.attach_q(qweights)
 
     q_centers = centers.attach_gaussian_q()
