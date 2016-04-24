@@ -169,7 +169,7 @@ def dirichlet_log_density(x, alpha, clip_finite=True):
     WARNING: does not enforce sum(x)==1; bad things will happen if this is violated. 
 
     """
-    
+
     if clip_finite:
         logx = tf.log(tf.clip_by_value(x, 1e-45, 1.0), name="dirichlet_logx")
     else:
@@ -180,7 +180,8 @@ def dirichlet_log_density(x, alpha, clip_finite=True):
         alpha = tf.zeros_like(x) + alpha
 
     log_z = tf.reduce_sum(gammaln(alpha)) - gammaln(tf.reduce_sum(alpha))
-    log_density = (alpha - 1) * logx - log_z
+    log_density = tf.reduce_sum((alpha - 1) * logx) - log_z
+    
     return log_density
     
 def beta_log_density(x, alpha=1.0, beta=1.0):
