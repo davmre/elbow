@@ -67,7 +67,10 @@ class TransposeQDistribution(QDistribution):
         
     def entropy(self):        
         return tf.constant(0.0, dtype=tf.float32)
-            
+
+    def initialize_to_value(self, x):
+        self.parent_q.initialize_to_value(x.T)
+    
 class Transpose(DeterministicTransform):
     def __init__(self, A, **kwargs):
         super(Transpose, self).__init__(A=A, **kwargs)

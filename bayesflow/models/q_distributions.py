@@ -24,7 +24,10 @@ class QDistribution(object):
 
     def density(self):
         raise Exception("not implemented")
-        
+
+    def initialize_to_value(self, x):
+        raise Exception("not implemented")
+    
 class ObservedQDistribution(QDistribution):
     def __init__(self, observed_val):
         shape = observed_val.shape
@@ -41,6 +44,7 @@ class ObservedQDistribution(QDistribution):
     def entropy(self):
         return tf.constant(0.0, dtype=tf.float32)
 
+    
 class DeltaQDistribution(QDistribution):
     def __init__(self, tf_value):
 
@@ -59,28 +63,31 @@ class DeltaQDistribution(QDistribution):
         return tf.constant(0.0, dtype=tf.float32)
     
 
-
-        
 class GaussianQDistribution(QDistribution):
     
     def __init__(self, shape, monte_carlo_entropy=False):
         super(GaussianQDistribution, self).__init__(shape=shape)
+
+        self.monte_carlo_entropy=monte_carlo_entropy
         
         init_mean = np.float32(np.random.randn(*shape))
         init_log_stddev = np.float32(np.ones(shape) * -10)
+        self._initialize(init_mean, init_log_stddev)
+        
+    def _initialize(self, init_mean, init_log_stddev):
         self.mean = tf.Variable(init_mean, name="mean")
         self.log_stddev = tf.Variable(init_log_stddev, name="log_stddev")
         self.stddev = tf.exp(tf.clip_by_value(self.log_stddev, -42, 42))
         self.variance = tf.square(self.stddev)
-        self.stochastic_eps = tf.placeholder(dtype=self.mean.dtype, shape=shape, name="eps")
+        self.stochastic_eps = tf.placeholder(dtype=self.mean.dtype, shape=self.output_shape, name="eps")
         self.sample = self.stochastic_eps * self.stddev + self.mean        
 
         # HACK
-        if monte_carlo_entropy:
+        if self.monte_carlo_entropy:
             self._entropy = -(tf.reduce_sum(bf.dists.gaussian_log_density(self.sample, mean=self.mean, variance=self.variance)))
         else:
             self._entropy = tf.reduce_sum(bf.dists.gaussian_entropy(variance=self.variance))
-
+        
     def params(self):
         return {"mean": self.mean, "stddev": self.stddev, "sample": self.sample}
         
@@ -90,6 +97,11 @@ class GaussianQDistribution(QDistribution):
     
     def entropy(self):
         return self._entropy
+
+    def initialize_to_value(self, x):
+        init_log_stddev = np.float32(np.ones(self.output_shape) * -4)
+        self._initialize(x, init_log_stddev)
+
     
 class BernoulliQDistribution(QDistribution):
     
@@ -97,14 +109,17 @@ class BernoulliQDistribution(QDistribution):
         super(BernoulliQDistribution, self).__init__(shape=shape)
         
         init_log_odds = np.float32(np.random.randn(*shape))
-        self.logodds = tf.Variable(init_log_odds, name="logodds")
+        self._initialize(init_log_odds)
+        
+    def _initialize(self, logodds):
+        self.logodds = tf.Variable(logodds, name="logodds")
         self.probs, _ = bf.transforms.logit(self.logodds)
 
-        self.stochastic_eps = tf.placeholder(dtype=self.probs.dtype, shape=shape, name="eps")
+        self.stochastic_eps = tf.placeholder(dtype=self.probs.dtype, shape=self.output_shape, name="eps")
         self.sample = self.stochastic_eps < self.probs     
         
         self._entropy = tf.reduce_sum(bf.dists.bernoulli_entropy(p=self.probs))
-
+        
     def params(self):
         return {"probs": self.probs, "sample": self.sample}
         
@@ -115,6 +130,13 @@ class BernoulliQDistribution(QDistribution):
     def entropy(self):
         return self._entropy
 
+    def initialize_to_value(self, x):
+        # assign logodds of 5.0 to True and -5.0 to False
+        implied_logodds = 5.0 * (x*2.0-1.0)
+        self._initialize(implied_logodds)
+        #self.logodds.assign(implied_logodds)
+
+    
 class SimplexQDistribution(QDistribution):
     # define a distribution on the simplex as a transform of an
     # (n-1)-dimensional Gaussian
@@ -142,3 +164,10 @@ class SimplexQDistribution(QDistribution):
         
     def entropy(self):
         return self._entropy
+
+    def initialize_to_value(self, x):
+        if self.gaussian_q is not None:
+            implied_log = np.log(x)
+            shifted = implied_log - implied_log[-1]
+            self.gaussian_q.initialize_to_value(shifted[:-1])
+        

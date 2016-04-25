@@ -131,7 +131,19 @@ class ConditionalDistribution(object):
 
     def default_q(self):
         raise Exception("default Q distribution not implemented!")
-    
+
+    def init_q_true(self):
+        for name, node in self.input_nodes.items():
+            node.init_q_true()
+        
+        qdist = self.q_distribution()
+        if not isinstance(qdist, ObservedQDistribution):
+            try:
+                qdist.initialize_to_value(self._sampled_value)
+                print "initialized", self.name, qdist
+            except Exception as e:
+                print "cannot initialize node", self.name, "qdist", qdist, e
+        
 class FlatDistribution(ConditionalDistribution):
 
     """
