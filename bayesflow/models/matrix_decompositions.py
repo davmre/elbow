@@ -8,10 +8,15 @@ from bayesflow.models import ConditionalDistribution
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std, **kwargs):
+    def __init__(self, A, B, std, rescale=True, **kwargs):
         super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std,  **kwargs) 
 
         self.K = A.output_shape[1]
+
+        # optionally compute (AB' / K) instead of AB',
+        # so that the marginal variance of the result equals
+        # the marginal variance of the inputs
+        self.rescale = rescale
         
     def inputs(self):
         return ("A", "B", "std")
@@ -30,7 +35,11 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
     def _sample(self, A, B, std):
         noise = np.asarray(np.random.randn(*self.output_shape), dtype=self.dtype) * std
-        return np.dot(A, B.T) + noise
+        prod = np.dot(A, B.T)
+        if self.rescale:
+            prod /= float(self.K)
+    
+        return prod + noise
     
     def _expected_logp(self, q_result, q_A, q_B, q_std):
         std = q_std.sample
@@ -38,8 +47,11 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
             
         mA, vA = q_A.mean, q_A.variance
         mB, vB = q_B.mean, q_B.variance
-        
+
         expected_result = tf.matmul(mA, tf.transpose(mB))
+        if self.rescale:
+            expected_result = expected_result / self.K
+        
         gaussian_lp = tf.reduce_sum(bf.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
 
         # can do a more efficient calculation if we assume a uniform (scalar) noise variance across all entries
@@ -53,6 +65,11 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         vAmB = tf.matmul(vA, tf.transpose(tf.square(mB)))
         mAvB = tf.matmul(tf.square(mA), tf.transpose(vB))
         correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
+        if self.rescale:
+            # rescaling the result is equivalent to rescaling each input by 1/sqrt(K),
+            # which scales the variances (and squared means) by 1/K.
+            # Which then scales each of the product terms vAvB, vAmB, etc by 1/K^2. 
+            correction = correction / (self.K * self.K)
         
         expected_lp = gaussian_lp - .5 * correction
         
