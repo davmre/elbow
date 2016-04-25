@@ -20,11 +20,7 @@ PRODUCTION_RULES = {'low-rank':          [('g',     ('lowrank', 'g', 'g'))],
                     
                     'sparsity':          [('g',     ('sparse', 'g'))],
                     
-                    'g-to-b':            [('g',     'b')],
-                    
-                    #TODO 'm-to-b':            [('cl',     'lf')],
                     }
-
 
 def is_valid(structure):
     if type(structure) == str and structure != 'g':
