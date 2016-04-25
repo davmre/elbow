@@ -15,19 +15,33 @@ from grammar import list_structures
 
 def build_column_stds(shape, settings, name):
     N, K = shape
-    
-    alpha = settings.gaussian_colprec_alpha
-    beta = settings.gaussian_colprec_beta
 
-    if settings.gaussian_ard:
+    if settings.gaussian_auto_ard:
         prec_dim = K
+
+
+        logstd_mean = GaussianMatrix(mean=0.0, std=1.0, output_shape=(1,),
+                                     dtype=np.float32, name="%s_logstd_mean" % name)
+        logstd_logstd = GaussianMatrix(mean=0.0, std=1.0, output_shape=(1,),
+                                       dtype=np.float32, name="%s_logstd_logstd" % name)
+        logstd_std = PointwiseTransformedMatrix(logstd_logstd, bf.transforms.exp,
+                                                name="%s_logstd_std" % name)
+
+
+        # model column stds as drawn from a lognormal distribution with inferred mean and std.
+        # this allows for ARD if we infer a high variance on the column stds, but cheaply
+        # specializes to the case where all column variances are the same
+        logstd = GaussianMatrix(mean=logstd_mean, std=logstd_std, output_shape=(prec_dim,),
+                                dtype=np.float32, name="%s_logstd" % name)
+        std = PointwiseTransformedMatrix(logstd, bf.transforms.exp,
+                                         name="%s_std" % name)
     else:
-        prec_dim = 1
-        
-    prec = GammaMatrix(alpha=alpha, beta=beta, output_shape=(prec_dim,),
-                            dtype=np.float32, name="%s_precs" % name)
-    std = PointwiseTransformedMatrix(prec, bf.transforms.reciprocal_sqrt,
-                                     name="%s_std" % name)
+        std = settings.constant_gaussian_std
+
+        #prec = GammaMatrix(alpha=alpha, beta=beta, output_shape=(prec_dim,),
+    #                        dtype=np.float32, name="%s_precs" % name)
+    #std = PointwiseTransformedMatrix(prec, bf.transforms.reciprocal_sqrt,
+    #                                 name="%s_std" % name)
 
     return std
     
@@ -67,29 +81,37 @@ def build_noise_std(settings, name):
 
 def build_lowrank(G1, G2, settings, name):
     noise_std = build_noise_std(settings, name)
+
+    G1.attach_q(GaussianQDistribution(G1.output_shape))
+    G2.attach_q(GaussianQDistribution(G2.output_shape))
+    
     return NoisyGaussianMatrixProduct(G1, G2, noise_std, name=name)
 
 def build_features(B, G, settings, name):
     noise_std = build_noise_std(settings, name)
+    G.attach_q(GaussianQDistribution(G.output_shape))
 
     return NoisyLatentFeatures(B, G, noise_std, name=name)
 
 def build_chain(G, settings, name):
     noise_std = build_noise_std(settings, name)
+    G.attach_q(GaussianQDistribution(G.output_shape))    
 
     return NoisyCumulativeSum(G, noise_std, name=name)
 
 def build_sparsity(G, settings, name):
-    expG = PointwiseTransformedMatrix(G1, bf.transforms.exp, name="%s_exp" % name)
-    
+    G.attach_q(GaussianQDistribution(G.output_shape))    
+    expG = PointwiseTransformedMatrix(G, bf.transforms.exp, name="%s_exp" % name)
     stds = build_column_stds(G.output_shape, settings, name)
-    return MultiplicativeGaussianNoise(expG1, stds, name=name)
+    return MultiplicativeGaussianNoise(expG, stds, name=name)
 
 def build_clustering(centers, shape, settings, name):
     N, D = shape
     K, D2 = centers.output_shape
     assert(D==D2)
-    
+
+    centers.attach_q(GaussianQDistribution(centers.output_shape))
+
     weights = DirichletMatrix(alpha=settings.dirichlet_alpha,
                               output_shape=(K,),
                               name="%s_weights" % name)
@@ -106,9 +128,9 @@ def build_model(structure, shape, settings, tree_path="g"):
     
     if isinstance(structure, str):
         if structure == "g":
-            return build_gaussian(shape, settings, name="g_%s" % tree_path)
+            return build_gaussian(shape, settings, name="%s_g" % tree_path)
         elif structure == 'b':
-            return build_bernoulli(shape, settings, name="b_%s" % tree_path)
+            return build_bernoulli(shape, settings, name="%s_b" % tree_path)
         else:
             raise Exception("invalid structure %s" % structure)
 
@@ -141,26 +163,12 @@ def build_model(structure, shape, settings, tree_path="g"):
     return model
 
 
-class ExperimentSettings(object):
-
-    def __init__(self):
-        self.gaussian_ard = True
-        self.gaussian_colprec_alpha = np.float32(2.0)
-        self.gaussian_colprec_beta = np.float32(0.5)
-        self.noise_prec_alpha = np.float32(1.0)
-        self.noise_prec_beta = np.float32(0.01)
-
-        self.beta_prior_params = np.float32(1.0), np.float32(1.0)
-
-        self.constant_noise_std = None
-        self.dirichlet_alpha = np.float32(1.0)
-        self.max_rank = 6
         
 def main():
     from bayesflow.models.train import construct_elbo, optimize_elbo, print_inference_summary
     
-    N = 100
-    D = 30
+    N = 50
+    D = 50
 
     X = np.float32(np.random.randn(N, D))
     
