@@ -105,6 +105,17 @@ def optimize_elbo(node, steps=200, adam_rate=0.1, debug=False, return_session=Fa
         sess.close()
         return elbo_terms, posterior
 
+def monte_carlo_elbo(elbo, sess, sample_stochastic, n_samples=1):
+
+    elbo_vals = []
+    for i in range(n_samples):
+        fd = sample_stochastic()
+        elbo_val = sess.run(elbo, feed_dict=fd)
+        elbo_vals.append(elbo_val)
+
+    return np.mean(elbo_vals)
+    
+    
 def print_inference_summary(elbo_terms, posterior):
     """
     Convenience function to print a summary of inference
@@ -119,3 +130,4 @@ def print_inference_summary(elbo_terms, posterior):
         for param, pval in params.items():
             if isinstance(pval, np.ndarray) and pval.size > 3: continue
             print "  ", param, pval
+
