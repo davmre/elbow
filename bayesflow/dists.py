@@ -77,6 +77,30 @@ def gaussian_log_density(x, mean=None, stddev=None, variance=None):
     lps = -0.5 * z   - .5 * tf.log(2*np.pi * variance)
     return lps
 
+def multivariate_gaussian_log_density(x, mu, Sigma):
+    """
+    Assume X is a single vector described by a multivariate Gaussian
+    distribution with x ~ N(mu, Sigma).
+    """
+    # TODO this implementation is embarassingly naive. should
+    # use Cholesky factorization from GPFlow / new TF versions?
+
+    s = extract_shape(x)
+    try:
+        n, = s
+    except:
+        n, m = s
+        assert(m==1)
+    
+    n_log2pi = n * 1.83787706641    
+    
+    logdet = tf.log(tf.matrix_determinant(Sigma))
+    
+    r = tf.reshape(x - mu, (n, 1))
+    Sinv = tf.matrix_inverse(Sigma)
+    logp = -.5 * (tf.matmul(tf.transpose(r), tf.matmul(Sinv, r)) + n_log2pi + logdet)
+    return logp
+
 
 def inv_gamma_log_density(x, alpha, beta):
     """Creates a TensorFlow variable representing the sum of one or more
