@@ -104,7 +104,8 @@ class NoisyCumulativeSum(ConditionalDistribution):
     def _sample(self, A, std):
         noise = np.asarray(np.random.randn(*self.output_shape), self.dtype) * std
         return np.cumsum(A, axis=0) + noise
-    
+
+
     def _expected_logp(self, q_result, q_A, q_std):
         
         
@@ -127,6 +128,16 @@ class NoisyCumulativeSum(ConditionalDistribution):
         reduced_gaussian_lp =  tf.reduce_sum(gaussian_lp) 
         reduced_correction = tf.reduce_sum(corrections)
         return reduced_gaussian_lp + reduced_correction
+    
+    def _logp(self, result, A, std):
+        N, D = self.output_shape
+        cumsum_mat = np.float32(np.tril(np.ones((N, N))))
+
+        expected_X = tf.matmul(cumsum_mat, A)
+        var = tf.square(std)
+        gaussian_lp = bf.dists.gaussian_log_density(result, expected_X, variance=var)
+        return tf.reduce_sum(gaussian_lp)
+        
     
 class NoisyLatentFeatures(ConditionalDistribution):
 
