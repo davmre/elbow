@@ -22,3 +22,9 @@ def extract_shape(t):
 def logsumexp(x1, x2):
     shift = tf.maximum(x1, x2)
     return tf.log(tf.exp(x1 - shift) + tf.exp(x2-shift)) + shift
+
+def triangular_inv(L):
+    eye = tf.diag(tf.ones_like(tf.diag_part(L)))
+    invL = tf.matrix_triangular_solve(L, eye)
+    return invL
+

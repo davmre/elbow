@@ -77,30 +77,77 @@ def gaussian_log_density(x, mean=None, stddev=None, variance=None):
     lps = -0.5 * z   - .5 * tf.log(2*np.pi * variance)
     return lps
 
-def multivariate_gaussian_log_density(x, mu, Sigma):
+def multivariate_gaussian_log_density(x, mu,
+                                      Sigma=None, L=None,
+                                      prec=None, L_prec=None):
     """
     Assume X is a single vector described by a multivariate Gaussian
     distribution with x ~ N(mu, Sigma).
-    """
-    # TODO this implementation is embarassingly naive. should
-    # use Cholesky factorization from GPFlow / new TF versions?
 
+    We accept parameterization in terms of the covariance matrix or
+    its cholesky decomposition L (more efficient if available), or the
+    precision matrix or its cholesky decomposition L_prec.
+    The latter is useful when representing a Gaussian in its natural 
+    parameterization. Note that we still require the explicit mean mu
+    (not the natural parameter prec*mu) since I'm too lazy to cover
+    all the permutations of possible arguments (though this should be
+    straightforward). 
+
+    """
     s = extract_shape(x)
     try:
         n, = s
     except:
         n, m = s
         assert(m==1)
-    
-    n_log2pi = n * 1.83787706641    
-    
-    logdet = tf.log(tf.matrix_determinant(Sigma))
-    
-    r = tf.reshape(x - mu, (n, 1))
-    Sinv = tf.matrix_inverse(Sigma)
-    logp = -.5 * (tf.matmul(tf.transpose(r), tf.matmul(Sinv, r)) + n_log2pi + logdet)
+
+    if L is None and Sigma is not None:
+        L = tf.cholesky(Sigma)        
+    if L_prec is None and prec is not None:
+        L_prec = tf.cholesky(prec)
+        
+    if L is not None:
+        neg_half_logdet = -tf.reduce_sum(tf.log(tf.diag_part(L)))
+    else:
+        assert(L_prec is not None)
+        neg_half_logdet = tf.reduce_sum(tf.log(tf.diag_part(L_prec)))
+        
+    d = tf.reshape(x - mu, (n,1))
+    if L is not None:
+        alpha = tf.matrix_triangular_solve(L, d, lower=True)
+        exponential_part= tf.reduce_sum(tf.square(alpha))
+    elif prec is not None:
+        d = tf.reshape(d, (n, 1))
+        exponential_part = tf.reduce_sum(d * tf.matmul(prec, d))
+    else:
+        assert(L_prec is not None)
+        d = tf.reshape(d, (1, n))
+        alpha = tf.matmul(d, L_prec)
+        exponential_part= tf.reduce_sum(tf.square(alpha))
+
+    n_log2pi = n * 1.83787706641
+    logp =  -0.5 * n_log2pi
+    logp += neg_half_logdet
+    logp += -0.5 * exponential_part
+        
     return logp
 
+
+def multivariate_gaussian_entropy(Sigma=None, L=None, L_prec=None):
+
+    if L is None and Sigma is not None:
+        L = tf.cholesky(Sigma)
+    
+    if L is not None:
+        half_logdet = tf.reduce_sum(tf.log(tf.diag_part(L)))
+        n, _ = extract_shape(L)
+    else:
+        half_logdet = -tf.reduce_sum(tf.log(tf.diag_part(L_prec)))
+        n, _ = extract_shape(L_prec)
+
+    log_2pi = 1.83787706641
+    entropy = .5*n*(1 + log_2pi) + half_logdet
+    return entropy
 
 def inv_gamma_log_density(x, alpha, beta):
     """Creates a TensorFlow variable representing the sum of one or more

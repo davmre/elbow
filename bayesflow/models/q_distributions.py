@@ -4,6 +4,7 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
+from bayesflow.gaussian_messages import MVGaussianNatural, MVGaussianMeanCov, reverse_message, forward_message
 
 # TODO: do we really need separate classes to represent Q
 # distributions? the "variational models" perspective is that they
@@ -79,7 +80,9 @@ class GaussianQDistribution(QDistribution):
         self.log_stddev = tf.Variable(init_log_stddev, name="log_stddev")
         self.stddev = tf.exp(tf.clip_by_value(self.log_stddev, -42, 42))
         self.variance = tf.square(self.stddev)
-        self.stochastic_eps = tf.placeholder(dtype=self.mean.dtype, shape=self.output_shape, name="eps")
+        print self.mean.dtype
+        #self.stochastic_eps = tf.placeholder(dtype=self.mean.dtype, shape=self.output_shape, name="eps")
+        self.stochastic_eps = tf.placeholder(dtype=np.float32, shape=self.output_shape, name="eps")
         self.sample = self.stochastic_eps * self.stddev + self.mean        
 
         # HACK
@@ -171,3 +174,112 @@ class SimplexQDistribution(QDistribution):
             shifted = implied_log - implied_log[-1]
             self.gaussian_q.initialize_to_value(shifted[:-1])
         
+
+
+def posdef_variable(n, init_log_diag=-10):
+    # parameterize M = A' diag(d) A
+    # where we'd like to constrain A to be triangular
+    # but I dunno if current TensorFlow has a good
+    # solution for this, so I'm lazy for the moment. 
+    
+    log_diag = tf.Variable(np.float32(np.ones((n,1)) * init_log_diag))
+    d = tf.exp(log_diag)
+    
+    init_A = np.float32(np.eye(n))
+    A = tf.Variable(init_A)
+
+    M = tf.matmul(tf.transpose(A), d * A)
+    return M
+            
+class ChainCRFQDistribution(QDistribution):
+
+    """
+    WARNING still some correctness bugs here
+    """
+    
+    def __init__(self, shape,
+                 transition_matrices,
+                 step_noise,
+                 unary_factors=None):
+
+        super(ChainCRFQDistribution, self).__init__(shape=shape)
+        T, d = shape
+
+        self.T = T
+        self._transition_matrices = transition_matrices
+        self._step_noise = step_noise
+
+        
+        if unary_factors is not None:
+            self._unary_factors = unary_factors
+        else:
+            unary_factors = []
+            for t in range(T):                
+                init_prec_mean = np.float32(np.random.randn((d,)) * 10)
+                unary_factor_prec_mean = tf.Variable(init_prec_mean, name="unary_factor_prec_mean_%d" % t)
+                unary_factor_prec = posdef_variable(d, init_log_diag=10)
+                unary_factor = MVGaussianNatural(unary_factor_prec_mean, unary_factor_prec)
+                unary_factors.append(unary_factor)
+            self._unary_factors = unary_factors
+            
+        
+        self.stochastic_eps = tf.placeholder(dtype=np.float32, shape=self.output_shape, name="eps")
+
+        self._back_filtered, self._logZ = self._pass_messages_backwards()
+        self.sample, self._entropy = self._sample_forward(self._back_filtered, self.stochastic_eps)
+        
+    def _transition_mat(self, t):
+        try:
+            return self._transition_matrices[t]
+        except:
+            return self._transition_matrices
+        
+    def _gaussian_noise(self, t):
+        try:
+            return self._step_noise[t]
+        except:
+            return self._step_noise
+
+    def _pass_messages_backwards(self):
+        messages = []
+        back_filtered = self._unary_factors[self.T-1]
+        messages.append(back_filtered)
+        logZ = 0.0
+        for t in np.arange(self.T-1)[::-1]:
+            back_filtered_pred = reverse_message(back_filtered,
+                                                 self._transition_mat(t),
+                                                 self._gaussian_noise(t))
+
+            unary_factor = self._unary_factors[t]
+            logZ += back_filtered_pred.multiply_density_logZ(unary_factor)
+            back_filtered = back_filtered_pred.multiply_density(unary_factor)
+
+            messages.append(back_filtered)
+
+        messages = messages[::-1]
+        return messages, logZ
+
+    def _sample_forward(self, back_filtered, eps):
+        samples = []
+
+        epses = tf.unpack(eps)
+        
+        z_i = back_filtered[0].sample(epses[0])
+        samples.append(z_i)
+
+        entropy = 0.0
+        for t in np.arange(1, self.T):
+            pred_mean = tf.matmul(self._transition_mat(t-1), z_i)
+            noise = self._gaussian_noise(t-1)
+
+            #new_prec_mean = noise.prec_mean() + tf.matmul(noise.prec(), pred_mean)
+            #incoming = MVGaussianNatural(new_prec_mean, noise.prec())
+            incoming = MVGaussianMeanCov(noise.mean() + pred_mean, noise.cov())
+            
+            sampling_dist = back_filtered[t].multiply_density(incoming)
+            z_i = sampling_dist.sample(epses[t])
+            entropy += sampling_dist.entropy()
+            samples.append(z_i)
+
+        sample = tf.squeeze(tf.pack(samples))
+        return sample, entropy
