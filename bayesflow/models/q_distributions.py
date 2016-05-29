@@ -31,10 +31,16 @@ class QDistribution(object):
     
 class ObservedQDistribution(QDistribution):
     def __init__(self, observed_val):
-        shape = observed_val.shape
+        try:
+            shape = observed_val.shape
+            self.mean = tf.constant(observed_val, name="mean")
+        except:
+            shape = util.extract_shape(observed_val)
+            self.mean = observed_val
+            
         super(ObservedQDistribution, self).__init__(shape=shape)
         
-        self.mean = tf.constant(observed_val, name="mean")
+
         self.stddev = tf.zeros_like(self.mean, name="stddev")
         self.variance = tf.identity(self.stddev)
         self.sample = self.mean 
