@@ -4,7 +4,6 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-
 from bayesflow.models import ConditionalDistribution
 from bayesflow.models.q_distributions import QDistribution
 
@@ -48,6 +47,8 @@ class TransposeQDistribution(QDistribution):
         for param in parent_q.params():
             self.__dict__[param] = tf.transpose(parent_q.__dict__[param])
 
+        self.sample = tf.transpose(parent_q.sample)
+            
         # HACKS
         try:
             self.variance = tf.transpose(parent_q.variance)
