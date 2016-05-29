@@ -80,7 +80,6 @@ class GaussianQDistribution(QDistribution):
         self.log_stddev = tf.Variable(init_log_stddev, name="log_stddev")
         self.stddev = tf.exp(tf.clip_by_value(self.log_stddev, -42, 42))
         self.variance = tf.square(self.stddev)
-        print self.mean.dtype
         #self.stochastic_eps = tf.placeholder(dtype=self.mean.dtype, shape=self.output_shape, name="eps")
         self.stochastic_eps = tf.placeholder(dtype=np.float32, shape=self.output_shape, name="eps")
         self.sample = self.stochastic_eps * self.stddev + self.mean        
@@ -191,18 +190,14 @@ def posdef_variable(n, init_log_diag=-10):
     M = tf.matmul(tf.transpose(A), d * A)
     return M
             
-class ChainCRFQDistribution(QDistribution):
+class LinearGaussianChainCRF(QDistribution):
 
-    """
-    WARNING still some correctness bugs here
-    """
-    
     def __init__(self, shape,
                  transition_matrices,
                  step_noise,
                  unary_factors=None):
 
-        super(ChainCRFQDistribution, self).__init__(shape=shape)
+        super(LinearGaussianChainCRF, self).__init__(shape=shape)
         T, d = shape
 
         self.T = T
@@ -227,12 +222,19 @@ class ChainCRFQDistribution(QDistribution):
 
         self._back_filtered, self._logZ = self._pass_messages_backwards()
         self.sample, self._entropy = self._sample_forward(self._back_filtered, self.stochastic_eps)
+
+    def entropy(self):
+        return self._entropy
+        
+    def sample_stochastic_inputs(self):
+        sampled_eps = np.random.randn(*self.output_shape)
+        return {self.stochastic_eps : sampled_eps}
         
     def _transition_mat(self, t):
         try:
-            return self._transition_matrices[t]
+            return tf.convert_to_tensor(self._transition_matrices[t])
         except:
-            return self._transition_matrices
+            return tf.convert_to_tensor(self._transition_matrices)
         
     def _gaussian_noise(self, t):
         try:
@@ -263,11 +265,13 @@ class ChainCRFQDistribution(QDistribution):
         samples = []
 
         epses = tf.unpack(eps)
-        
-        z_i = back_filtered[0].sample(epses[0])
+
+        sampling_dist = back_filtered[0]
+        z_i = sampling_dist.sample(epses[0])
         samples.append(z_i)
 
-        entropy = 0.0
+        sampling_dists = [sampling_dist]        
+        entropies = [sampling_dist.entropy()]
         for t in np.arange(1, self.T):
             pred_mean = tf.matmul(self._transition_mat(t-1), z_i)
             noise = self._gaussian_noise(t-1)
@@ -277,9 +281,15 @@ class ChainCRFQDistribution(QDistribution):
             incoming = MVGaussianMeanCov(noise.mean() + pred_mean, noise.cov())
             
             sampling_dist = back_filtered[t].multiply_density(incoming)
+            sampling_dists.append(sampling_dist)
+            
             z_i = sampling_dist.sample(epses[t])
-            entropy += sampling_dist.entropy()
+            entropies.append(sampling_dist.entropy())            
             samples.append(z_i)
 
-        sample = tf.squeeze(tf.pack(samples))
+        self.sampling_dists = sampling_dists
+        self.entropies = entropies
+
+        entropy = tf.reduce_sum(tf.pack(entropies))
+        sample = tf.reshape(tf.squeeze(tf.pack(samples)), self.output_shape)
         return sample, entropy

@@ -5,9 +5,6 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-"""
-WARNING: untested, known correctness bugs
-"""
 
 class AbstractMVGaussian(object):
 
@@ -36,7 +33,7 @@ class AbstractMVGaussian(object):
         return self._entropy
 
     def sample(self, eps):        
-        return tf.matmul(self._L_cov, tf.reshape(eps, (-1, 1)))
+        return self.mean() + tf.matmul(self._L_cov, tf.reshape(eps, (-1, 1)))
     
     def multiply_density(self, other_gaussian):
         # the product of two Gaussian densities has
@@ -95,6 +92,9 @@ class MVGaussianMeanCov(AbstractMVGaussian):
 
     def __init__(self, mean, cov, d=None):
 
+        mean = tf.convert_to_tensor(mean)
+        cov = tf.convert_to_tensor(cov)
+        
         try:
             d1, = util.extract_shape(mean)
             mean = tf.reshape(mean, (d1,1))
@@ -131,6 +131,9 @@ class MVGaussianNatural(AbstractMVGaussian):
 
     def __init__(self, prec_mean, prec, d=None):
 
+        prec_mean = tf.convert_to_tensor(prec_mean)
+        prec = tf.convert_to_tensor(prec)
+        
         try:
             d1, = util.extract_shape(prec_mean)
             prec_mean = tf.reshape(prec_mean, (d1,1))
