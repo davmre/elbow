@@ -10,7 +10,7 @@ from bayesflow.models.elementary import GaussianMatrix
 from bayesflow.models.q_distributions import LinearGaussianChainCRF
 from bayesflow.gaussian_messages import MVGaussianMeanCov
 from bayesflow.models.neural import VAEDecoderBernoulli, VAEEncoder
-
+from bayesflow.models.minibatch import PackModels
 
 def sample_toy_synthetic(d_x, T, noise_std):
     # not yet used: intended to replicate the toy test case from the SVAE paper
@@ -33,38 +33,35 @@ def decoder_params(d_z, d_hidden, d_x):
     b2 = GaussianMatrix(0.0, 0.0001, name="b2", output_shape=(d_x,))
     return w1, w2, b1, b2
 
+def dynamic_vae(T = 50, d_z = 1, d_hidden=2, d_x = 10, batchsize=2, N=10):
 
-"""
-def dynamic_vae():
-
-    N = 100
-    batchsize = 1
-    T = 10
-    d_z = 2
-    d_hidden=256
-    d_x = 28*28
+    minibatch_scale_factor = float(N)/batchsize
     
-    minibatch_scaling = N/float(batchsize)
-    
-    transition_mat = np.eye(d_z) #GaussianMatrix(mean=0, std=1.0, output_shape=(D, D), name="transition")
-    transition_bias = np.zeros((d_z, d_z))
-    transition_cov = np.eye(d_z)
+    # MODEL
+    transition_mat = np.eye(d_z, dtype=np.float32) #GaussianMatrix(mean=0, std=1.0, output_shape=(D, D), name="transition")
+    transition_bias = np.zeros((d_z,), dtype=np.float32)
+    transition_cov = np.eye(d_z, dtype=np.float32)
     step_noise = MVGaussianMeanCov(transition_bias, transition_cov)
-    
-    w1, w2, b1, b2 = init_decoder_params(d_z, d_hidden, d_x)
 
-    z = []
-    x = []
+    w1, w2, b1, b2 = decoder_params(d_z, d_hidden, d_x)
+
+    zis = []
     for i in range(batchsize):
-        # TODO infrastructure for iid observations across a batch
-        zi = LinearGaussian(T, transition_bias, transition_cov, transition_mat, transition_bias, transition_cov, name="z_%d", minibatch_scale_factor=minibatch_scaling)
-        z.append(zi)
-        
-    z_batch = tf.pack(z)
-    x = VAEDecoderBernoulli(z_batch, w1, w2, b1, b2, name="x", minibatch_scale_factor = batch_scaling)
-        
-    q_x = X.observe(Xbatch)
+        zi = LinearGaussian(T, transition_bias, transition_cov,
+                            transition_mat, transition_bias, transition_cov,
+                            name="z_%d" % i, minibatch_scale_factor=minibatch_scale_factor)
+        zis.append(zi)
+
+    z_batch = PackModels(zis) # shape B x T x d_z
+    x = VAEDecoderBernoulli(z_batch, w1, w2, b1, b2, name="x", minibatch_scale_factor = minibatch_scale_factor)
+
+    # SYNTHETIC OBSERVATION
+    x_sampled = x.sample(0)
+    q_x = x.observe(x_sampled)
+
+    # INFERENCE MODEL
     upwards_messages = VAEEncoder(q_x.sample, d_hidden, d_z)
+    tmat = tf.constant(transition_mat)
     item_upwards_means = tf.unpack(upwards_messages.mean)
     item_upwards_vars = tf.unpack(upwards_messages.variance)
     for i, (upwards_means, upwards_vars) in enumerate(zip(item_upwards_means, item_upwards_vars)):
@@ -72,11 +69,10 @@ def dynamic_vae():
         time_vars = tf.unpack(upwards_vars)
         unary_factors = [MVGaussianMeanCov(mean, tf.diag(vs)) for (mean, vs) in zip(time_means, time_vars)]
 
-        q_zi = LinearGaussianChainCRF((T, d_z), transition_mat, step_noise, unary_factors)
-        z[i].attach_q(q_z)
+        q_zi = LinearGaussianChainCRF((T, d_z), tmat, step_noise, unary_factors)
+        zis[i].attach_q(q_zi)
 
-    return x, z
-"""
+    return x, zis, x_sampled
 
 def dynamic_vae_single(T = 50, d_z = 1, d_hidden=2, d_x = 10):
 
@@ -110,7 +106,8 @@ def dynamic_vae_single(T = 50, d_z = 1, d_hidden=2, d_x = 10):
     
 
 def main():
-    x, z, x_sampled = dynamic_vae_single(T = 50, d_z = 1, d_hidden=2, d_x = 10)
+    #x, z, x_sampled = dynamic_vae_single(T = 50, d_z = 1, d_hidden=2, d_x = 10)
+    x, zis, x_sampled = dynamic_vae(T = 20, d_z = 1, d_hidden=2, d_x = 10)
     
     elbo, sample_stochastic_inputs, decompose_elbo, inspect_posterior = construct_elbo(x)
 
