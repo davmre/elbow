@@ -37,8 +37,29 @@ class VAEDecoderBernoulli(ConditionalDistribution):
         assert(z_dtype == b2_dtype)
         return z_dtype
         
-    def _sample(self, A, B, std):
-        raise Exception("not implemented")
+    def _sample(self, z, w1, w2, b1, b2, return_probs=False):
+
+        g = tf.Graph()
+        with g.as_default():
+            z = tf.convert_to_tensor(z)
+            w1 = tf.convert_to_tensor(w1)
+            w2 = tf.convert_to_tensor(w2)
+            b1 = tf.convert_to_tensor(b1)
+            b2 = tf.convert_to_tensor(b2)
+
+            h1 = tf.nn.tanh(layer(z, w1, b1))
+            h2 = tf.nn.sigmoid(layer(h1, w2, b2))
+
+            init = tf.initialize_all_variables()
+            
+        sess = tf.Session(graph=g)
+        sess.run(init)
+        probs = sess.run(h2)
+
+        if return_probs:
+            return probs
+        else:
+            return np.asarray(np.random.rand(*probs.shape) < probs, dtype=self.dtype)
     
     def _logp(self, result, z, w1, w2, b1, b2):
         h1 = tf.nn.tanh(layer(z, w1, b1))
