@@ -7,8 +7,6 @@ import bayesflow as bf
 import bayesflow.util as util
 from bayesflow.models.q_distributions import ObservedQDistribution, GaussianQDistribution
 
-
-
 class ConditionalDistribution(object):
     """
     
@@ -21,12 +19,14 @@ class ConditionalDistribution(object):
     """
 
     
-    def __init__(self, output_shape=None, dtype=None, name=None, **kwargs):
+    def __init__(self, output_shape=None, dtype=None, minibatch_scale_factor = None, name=None, **kwargs):
 
         if name is None:
             name = str(self.__class__.__name__) + "_" + str(uuid.uuid4().hex)[:6]
             print "constructed name", name
         self.name = name
+
+        self.minibatch_scale_factor = minibatch_scale_factor
 
         # store map of input param names to the nodes modeling those params
         self.input_nodes = {}
@@ -35,6 +35,9 @@ class ConditionalDistribution(object):
             # if they are constants, we create a node to represent that. 
             if isinstance(kwargs[input_name], ConditionalDistribution):
                 self.input_nodes[input_name] = kwargs[input_name]
+            elif kwargs[input_name] is None:
+                # allow optional args to be passed as None
+                pass
             else:
                 constant_node = FlatDistribution(kwargs[input_name], fixed=True, name=self.name+"_"+input_name+"_fixed")
                 self.input_nodes[input_name] = constant_node
@@ -89,6 +92,11 @@ class ConditionalDistribution(object):
         with tf.name_scope(self.name + "_Elogp") as scope:
             expected_lp = self._expected_logp(q_result = q, **input_qs)
         entropy = q.entropy()
+        
+        if self.minibatch_scale_factor is not None:
+            expected_lp *= self.minibatch_scale_factor
+            entropy *= self.minibatch_scale_factor
+
         return expected_lp, entropy
 
     def _expected_logp(self, **kwargs):
