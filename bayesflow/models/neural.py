@@ -9,7 +9,10 @@ from bayesflow.models import ConditionalDistribution
 from bayesflow.models.q_distributions import QDistribution
 
 def layer(inp, w, b):
-    return tf.matmul(inp, w) + b
+    if len(inp.get_shape()) == 2:
+        return tf.matmul(inp, w) + b
+    else:
+        return tf.pack([tf.matmul(inp_slice, w) + b for inp_slice in tf.unpack(inp)])
 
 def init_weights(*shape):
     return tf.Variable(tf.random_normal(shape, stddev=0.01, dtype=tf.float32))
@@ -21,14 +24,13 @@ class VAEDecoderBernoulli(ConditionalDistribution):
     def __init__(self, z, w1, w2, b1, b2, **kwargs):
         super(VAEDecoderBernoulli, self).__init__(z=z, w1=w1, w2=w2, b1=b1, b2=b2, **kwargs)
 
-        
     def inputs(self):
         return ("z", "w1", "w2", "b1", "b2")
         
     def _compute_shape(self, z_shape, w1_shape, w2_shape, b1_shape, b2_shape):
-        N, d_latent = z_shape
+        d_latent = z_shape[-1]
         d_output, = b2_shape
-        return (N, d_output)
+        return z_shape[:-1] + (d_output,)
     
     def _compute_dtype(self, z_dtype, w1_dtype, w2_dtype, b1_dtype, b2_dtype):
         assert(z_dtype == w1_dtype)
@@ -71,8 +73,10 @@ class VAEDecoderBernoulli(ConditionalDistribution):
 class VAEEncoder(QDistribution):
 
     def __init__(self, X, d_hidden, d_z):
-        N, d_x = util.extract_shape(X)
-        super(VAEEncoder, self).__init__(shape=(N, d_z))
+        x_shape = util.extract_shape(X)
+        d_x = x_shape[-1]
+        z_shape = x_shape[:-1] + (d_z,)
+        super(VAEEncoder, self).__init__(shape=z_shape)
 
         w3 = init_weights(d_x, d_hidden)
         w4 = init_weights(d_hidden, d_z)
@@ -80,7 +84,6 @@ class VAEEncoder(QDistribution):
         b3 = init_zero_vector(d_hidden)
         b4 = init_zero_vector(d_z)
         b5 = init_zero_vector(d_z)
-        
         
         h1 = tf.nn.tanh(layer(X, w3, b3))
         self.mean = layer(h1, w4, b4)
