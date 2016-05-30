@@ -45,3 +45,15 @@ def get_mnist():
     Xdata = (mnist["X"]/255.).astype(np.float32)
     ydata = mnist["y"]
     return Xdata, ydata
+
+def mnist_training_data():
+    Xdata, ydata = get_mnist()
+    Xtrain = Xdata[0:60000]
+    Xtest = Xdata[60000:70000]
+
+    ytrain = ydata[0:60000]
+    ytest = ydata[60000:70000]
+    
+    sortinds = np.random.permutation(60000)
+    return Xtrain[sortinds], ytrain[sortinds], Xtest, ytest
+
