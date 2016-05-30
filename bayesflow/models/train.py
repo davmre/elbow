@@ -52,7 +52,9 @@ def construct_elbo(*evidence_nodes):
         for name, params in node_posteriors.items():
             variables[name] = {}
             for param_name, param_tensor in params.items():
+                if param_tensor in feed_dict.keys(): continue
                 variables[name][param_name] = session.run(param_tensor, feed_dict=feed_dict)
+                
         return variables
 
     q_distributions = set([node.q_distribution() for node in model_nodes])
