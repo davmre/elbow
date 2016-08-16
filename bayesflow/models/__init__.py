@@ -7,6 +7,29 @@ import bayesflow as bf
 import bayesflow.util as util
 from bayesflow.models.q_distributions import ObservedQDistribution, GaussianQDistribution
 
+def sugar_fullname(name):
+    """
+    Allow omitting the output name when passing a node with a single output
+    """
+    
+    if isinstance(name, ConditionalDistribution):
+        outputs = name.outputs()
+        if len(outputs) > 1:
+            raise Exception("ConditionalDistribution %s has multiple outputs %s, please specify which one you want! Use a tuple (node, output_name)." % (name, outputs))
+        elif len(outputs) == 0:
+            raise Exception("ConditionalDistribution %s has no outputs!" % (name,))
+        else:
+            return (name, outputs[0])
+    else:
+        return name
+
+def namestr(name):
+    if isinstance(name, str):
+        return name
+    else:
+        node, subname = name
+        return str(node) + "_" + namestr(subname)
+    
 class ConditionalDistribution(object):
     """
     
@@ -18,43 +41,40 @@ class ConditionalDistribution(object):
 
     """
 
-    
-    def __init__(self, output_shape=None, dtype=None, minibatch_scale_factor = None, name=None, **kwargs):
+    def __init__(self, shape=None, minibatch_scale_factor = None, name=None, **kwargs):
 
         if name is None:
-            name = str(self.__class__.__name__) + "_" + str(uuid.uuid4().hex)[:6]
+            name = str(uuid.uuid4().hex)[:6]
             print "constructed name", name
         self.name = name
 
         self.minibatch_scale_factor = minibatch_scale_factor
 
-        # store map of input param names to the nodes modeling those params
-        self.input_nodes = {}
-        for input_name in self.inputs():
+        if shape is not None:
+            self.shape = shape
+        
+        # store map of input local names to the canonical names, that
+        # is, (node, name) pairs -- modeling those params.
+        self.inputs_random = {}
+        self.inputs_nonrandom = {}
+        for input_name, default_constructor in self.inputs().items():
             # inputs can be provided as constants, or nodes modeled by bayesflow distributions.
-            # if they are constants, we create a node to represent that. 
             if isinstance(kwargs[input_name], ConditionalDistribution):
-                self.input_nodes[input_name] = kwargs[input_name]
+                self.inputs_random[input_name] = sugar_fullname(kwargs[input_name])
+            elif kwargs[input_name] is not None:
+                # if inputs are provided as TF or numpy values, just store that directly
+                tf_value = tf.convert_to_tensor(kwargs[input_name], dtype=tf.float32)
+                self.inputs_nonrandom[input_name] = tf_value
             elif kwargs[input_name] is None:
-                # allow optional args to be passed as None
-                pass
-            else:
-                constant_node = FlatDistribution(kwargs[input_name], fixed=True, name=self.name+"_"+input_name+"_fixed")
-                self.input_nodes[input_name] = constant_node
-
+                # free inputs will be optimized over
+                self.inputs_nonrandom[input_name] = default_constructor(shape=self._input_shape(input_name))
                 
-        # compute the shape of the output at this node
-        if output_shape is not None:
-            self.output_shape = output_shape
-        else:
-            input_shapes = {name + "_shape": node.output_shape for (name,node) in self.input_nodes.items()}
-            self.output_shape = self._compute_shape(**input_shapes)
-
-        if dtype is not None:
-            self.dtype = dtype
-        else:
-            input_dtypes = {name + "_dtype": node.dtype for (name,node) in self.input_nodes.items()}
-            self.dtype = self._compute_dtype(**input_dtypes)
+        # if not already specified, compute the shape of the output at
+        # this node as a function of its inputs
+        if self.shape is None:
+            input_shapes = {name + "_shape": node.shape for (name,node) in self.inputs_random.items()}
+            input_shape.update({name + "_shape": tnode.get_shape() for (name, tnode) in self.inputs_nonrandom.items()})
+            self.shape = self._compute_shape(**input_shapes)
         
         # compute the list of all ancestor nodes in the graph, by
         # merging the ancestor lists of the parent nodes.  Storing
@@ -63,42 +83,45 @@ class ConditionalDistribution(object):
         # constructing joint quantities like the ELBO. This could be
         # optimized if the ancestor lists ever become a performance
         # bottleneck.
-        self.ancestors = set( [self,] + [ancestor for node in self.input_nodes.values() for ancestor in node.ancestors ] )
+        self.ancestors = set( [self,] + [ancestor for inp in self.inputs_random.values() if inp is not None for ancestor in inp[0].ancestors ] )
     
         self._sampled_value = None
         self._sampled_value_seed = None
 
         self._q_distribution = None
-        
-    def sample(self, seed=0):
-        
-        if seed != self._sampled_value_seed:
-            input_samples = {name: node.sample(seed=seed) for (name,node) in self.input_nodes.items()}        
 
-            # add a salt to ensure we get independent samples at each node
-            salt = self.name.__hash__()
-            local_seed = (seed + salt) % (2**32)
-            np.random.seed(local_seed)
-            
-            self._sampled_value_seed = seed
-            self._sampled_value = self._sample(**input_samples)
+        # TODO do something sane here...
+        self.dtype = tf.float32
         
-        return self._sampled_value
+    def outputs(self):
+        return (self.name,)
+
+    def _parameterized_logp(self, *args, **kwargs):
+        """
+        Compute the log probability using the values of all fixed input
+        parameters associated with this graph node.
+        """
+        kwargs.update(self.inputs_nonrandom)
+        return self._logp(*args, **kwargs)
+
+    def _parameterized_sample(self, *args, **kwargs):
+        """
+        Compute the log probability using the values of all fixed input
+        parameters associated with this graph node.
+        """
+        kwargs.update(self.inputs_nonrandom)
+        return self._sample(*args, **kwargs)
     
-    def elbo_term(self):
-        input_qs = {"q_"+name: node.q_distribution() for (name,node) in self.input_nodes.items()}
+    def _entropy_lower_bound(self, *args, **kwargs):
+        """
+        If a distribution defines an exact entropy, use that.
+        """
+        return self._entropy(*args, **kwargs)
 
-        q = self.q_distribution()
-        with tf.name_scope(self.name + "_Elogp") as scope:
-            expected_lp = self._expected_logp(q_result = q, **input_qs)
-        entropy = q.entropy()
-        
-        if self.minibatch_scale_factor is not None:
-            expected_lp *= self.minibatch_scale_factor
-            entropy *= self.minibatch_scale_factor
-
-        return expected_lp, entropy
-
+    def _parameterized_entropy_lower_bound(self, *args, **kwargs):
+        kwargs.update(self.inputs_nonrandom)
+        return self._entropy_lower_bound(*args, **kwargs)
+    
     def _expected_logp(self, **kwargs):
         # default implementation: compute E_q[ log p(x) ] as a Monte Carlo sample.
         samples = {}
@@ -108,85 +131,53 @@ class ConditionalDistribution(object):
             samples[key] = qdist.sample
         return self._logp(**samples)
 
-    def __str__(self):
-        return self.name + "_" + str(type(self))
-
-    def q_distribution(self):
-        
-        if self._q_distribution is None:
-            default_q = self.default_q()
-
-            # explicitly use the superclass method since some subclasses
-            # may redefine attach_q to prevent user-attached q's
-            ConditionalDistribution.attach_q(self, default_q)
+    def _optimized_params(self, sess, feed_dict=None):
+        optimized_params = {}
+        for name, node in self.inputs_nonrandom.items():
+            optimized_params[name] = sess.run(node, feed_dict = None)
+        return optimized_params
             
-        return self._q_distribution
-    
-    def attach_q(self, q_distribution):
-        # TODO check that the types and shape of the Q distribution match
+    def __str__(self):
+        return repr(self)
 
-        if self._q_distribution is not None:
-            raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
+    def __repr__(self):
+        return str(self.__class__.__name__) + "_" + namestr(self.name) 
 
-        assert(self.output_shape == q_distribution.output_shape)
-        
-        self._q_distribution = q_distribution
-    
-    def observe(self, observed_val):
-        qdist = ObservedQDistribution(observed_val)
-        self.attach_q(qdist)
-        return qdist
 
-    def default_q(self):
-        raise Exception("default Q distribution not implemented!")
 
-    def init_q_true(self):
-        for name, node in self.input_nodes.items():
-            node.init_q_true()
-        
-        qdist = self.q_distribution()
-        if not isinstance(qdist, ObservedQDistribution):
-            try:
-                qdist.initialize_to_value(self._sampled_value)
-                print "initialized", self.name, qdist
-            except Exception as e:
-                print "cannot initialize node", self.name, "qdist", qdist, e
-        
-class FlatDistribution(ConditionalDistribution):
-
+class WrapperNode(ConditionalDistribution):
     """
-    A "dummy" distribution object representing a flat prior. It requires a "default" value that will
-    be returned when sampling from this distribution. 
-    
-    Parameters with known or fixed values can be represented using a flat prior and an ObservedQDistribution 
-    to fix them to the given value. 
+    Lifts a Tensorflow graph node representing a point value to a ConditionalDistribution. 
+    This implements the 'return' operation of the probability monad. 
     """
-    
-    def __init__(self, value, fixed=True, **kwargs):
-        try:
-            self.dtype = value.dtype
-        except:
-            self.dtype = np.float32
-        
-        self.value = np.asarray(value, dtype=self.dtype) 
-        output_shape = self.value.shape        
-        super(FlatDistribution, self).__init__(output_shape = output_shape, **kwargs)
 
-        if fixed:
-            qdist = ObservedQDistribution(self.value)
-            self.attach_q(qdist)
-        
+    def __init__(self, tf_value, name):
+        self.name = name
+        self.tf_value = tf_value
+        self.shape = tf_value.get_shape()
+        self.ancestors = set()
+        self.inputs_random = {}
+        self.inputs_nonrandom = {}
+
+        print "WN name", name
+        if isinstance(name, tuple):
+            import pdb; pdb.set_trace()
+
     def inputs(self):
-        return ()
+        return {}
         
-    def _sample(self, seed=0):
-        return self.value
-    
-    def _compute_dtype(self):
-        return self.dtype
+    def _sample(self):
+        return {self.name: self.tf_value}, lambda : {}
 
-    def _logp(self, result):
+    def _logp(self, **kwargs):
+        return tf.constant(0.0, dtype=tf.float32), {}
+
+    def _entropy(self, **kwargs):
         return tf.constant(0.0, dtype=tf.float32)
 
+    def outputs(self):
+        return (self.name,)
 
-                                    
+    def inputs(self):
+        return ()
+

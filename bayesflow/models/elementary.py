@@ -7,6 +7,7 @@ import bayesflow.util as util
 from bayesflow.models import ConditionalDistribution
 from bayesflow.models.q_distributions import GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
 from bayesflow.models.transforms import PointwiseTransformedQDistribution
+from bayesflow.parameterization import unconstrained, positive_exp
 
 import scipy.stats
 
@@ -167,20 +168,35 @@ class MultinomialMatrix(ConditionalDistribution):
     def _compute_dtype(self, p_dtype):
         return np.int32
     
-class GaussianMatrix(ConditionalDistribution):
+class Gaussian(ConditionalDistribution):
     
-    def __init__(self, mean, std, **kwargs):
-        super(GaussianMatrix, self).__init__(mean=mean, std=std, **kwargs) 
-        
+    def __init__(self, mean=None, std=None, **kwargs):
+
+        super(Gaussian, self).__init__(mean=mean, std=std, **kwargs) 
+
+
+        #self.variance = tf.square(self.std)        
+        # TODO figure out conventions for storing parameters locally
+        # and for multiple parameterizations...
+        # and for multiple outputs
+
     def inputs(self):
-        return ("mean", "std")
-        
+        return {"mean": unconstrained, "std": positive_exp}
+
     def _sample(self, mean, std):
-        return np.asarray(np.random.randn(*self.output_shape), dtype=self.dtype) * std + mean
+        eps = tf.placeholder(shape=self.shape, dtype=self.dtype)
+        def random_source():
+            sample = np.asarray(np.random.randn(*self.shape), dtype=np.float32)
+            return {eps: sample}
+        return {self.name: eps * std + mean}, random_source
     
     def _logp(self, result, mean, std):
-        lp = tf.reduce_sum(bf.dists.gaussian_log_density(result, mean = mean, stddev=std))
+        lp = tf.reduce_sum(bf.dists.gaussian_log_density(result, mean=mean, stddev=std))
         return lp
+
+    def _entropy(self, std, **kwargs):
+        variance = std**2
+        return tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
     
     def _expected_logp(self, q_result, q_mean, q_std):
         cross = bf.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, q_mean.sample, tf.square(q_std.sample))
@@ -188,10 +204,12 @@ class GaussianMatrix(ConditionalDistribution):
     
     def _compute_shape(self, mean_shape, std_shape):
         return bf.util.broadcast_shape(mean_shape, std_shape)
-        
+
+    def _input_shape(self, param):
+        assert (param in self.inputs().keys())
+        return self.shape
+    
     def _compute_dtype(self, mean_dtype, std_dtype):
         assert(mean_dtype==std_dtype)
         return mean_dtype
         
-    def default_q(self):
-        return GaussianQDistribution(shape=self.output_shape)

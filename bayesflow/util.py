@@ -1,15 +1,14 @@
 import numpy as np
 import tensorflow as tf
 
-def _infer_result_shape(*args):
-    # given multiple Tensors and/or Python values, return the
-    # shape to which an elementwise operation (e.g., addition)
-    # would broadcast
-
-    # TODO: check numpy API to see if there's a direct way to do this
-    # otherwise I could create dummy tensors and pass them around?
-    pass
-
+def concrete_shape(shape):
+    if isinstance(shape, tuple):
+        return shape
+    elif isinstance(shape, tf.TensorShape):
+        return tuple([d.value for d in t.get_shape()])
+    else:
+        raise Exception("don't know how to interpret %s as a tensor shape" % shape)
+    
 def extract_shape(t):
 
     if t.get_shape():
