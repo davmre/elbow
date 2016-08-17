@@ -4,7 +4,7 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-from bayesflow.models import ConditionalDistribution
+from bayesflow.models import ConditionalDistribution, JMContext, current_scope
 from bayesflow.models.q_distributions import GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
 from bayesflow.models.transforms import PointwiseTransformedQDistribution
 from bayesflow.parameterization import unconstrained, positive_exp
@@ -197,6 +197,11 @@ class Gaussian(ConditionalDistribution):
     def _entropy(self, std, **kwargs):
         variance = std**2
         return tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
+
+    def _default_variational_model(self, vname=None):
+        if vname is None:
+            vname = self.name
+        return Gaussian(shape=self.shape, name="q_"+vname, model=None)
     
     def _expected_logp(self, q_result, q_mean, q_std):
         cross = bf.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, q_mean.sample, tf.square(q_std.sample))

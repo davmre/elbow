@@ -41,18 +41,19 @@ class ConditionalDistribution(object):
 
     """
 
-    def __init__(self, shape=None, minibatch_scale_factor = None, name=None, **kwargs):
+    def __init__(self, shape=None, minibatch_scale_factor = None,
+                 name=None, model="auto", **kwargs):
 
         if name is None:
             name = str(uuid.uuid4().hex)[:6]
             print "constructed name", name
         self.name = name
-
+        
         self.minibatch_scale_factor = minibatch_scale_factor
 
         if shape is not None:
             self.shape = shape
-        
+            
         # store map of input local names to the canonical names, that
         # is, (node, name) pairs -- modeling those params.
         self.inputs_random = {}
@@ -92,6 +93,13 @@ class ConditionalDistribution(object):
 
         # TODO do something sane here...
         self.dtype = tf.float32
+
+        self.model = None
+        if model == "auto":
+            model = current_scope()
+        if model is not None:
+            # will set self.model on this rv
+            model.extend(self)
         
     def outputs(self):
         return (self.name,)
@@ -151,17 +159,19 @@ class WrapperNode(ConditionalDistribution):
     This implements the 'return' operation of the probability monad. 
     """
 
-    def __init__(self, tf_value, name):
-        self.name = name
+    def __init__(self, tf_value, **kwargs):
         self.tf_value = tf_value
-        self.shape = tf_value.get_shape()
-        self.ancestors = set()
-        self.inputs_random = {}
-        self.inputs_nonrandom = {}
+        shape = self.shape = tf_value.get_shape()
+        super(WrapperNode, self).__init__(shape=shape, **kwargs)
+        
+        
+        #self.ancestors = set()
+        #self.inputs_random = {}
+        #self.inputs_nonrandom = {}
 
-        print "WN name", name
-        if isinstance(name, tuple):
-            import pdb; pdb.set_trace()
+        #print "WN name", name
+        #if isinstance(name, tuple):
+        #    import pdb; pdb.set_trace()
 
     def inputs(self):
         return {}
@@ -178,6 +188,23 @@ class WrapperNode(ConditionalDistribution):
     def outputs(self):
         return (self.name,)
 
-    def inputs(self):
-        return ()
+_bf_jointmodel_stack_ = ()
+class JMContext(object):
+    def __init__(self, jm=None):
+        if jm is None:
+            from bayesflow.models.joint_model import JointModel
+            jm = JointModel()
+        self.jm = jm
 
+    def __enter__(self):
+        global _bf_jointmodel_stack_
+        _bf_jointmodel_stack_ = _bf_jointmodel_stack_ + (self.jm,)        
+        return self.jm
+    
+    def __exit__(self, type, value, traceback):
+        global _bf_jointmodel_stack_
+        _bf_jointmodel_stack_ = _bf_jointmodel_stack_[:-1]
+        
+def current_scope():
+    global _bf_jointmodel_stack_
+    return _bf_jointmodel_stack_[-1]

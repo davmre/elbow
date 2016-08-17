@@ -4,10 +4,7 @@ import tensorflow as tf
 import uuid
 import copy
 
-from bayesflow.models import ConditionalDistribution, WrapperNode, sugar_fullname, namestr
-
-
-
+from bayesflow.models import ConditionalDistribution, WrapperNode, JMContext, sugar_fullname, namestr
 
 class JointModel(ConditionalDistribution):
 
@@ -31,8 +28,14 @@ class JointModel(ConditionalDistribution):
         Extend the joint model to include a new ConditionalDistribution d. 
         We require the joint model be built in topological order, so 
         all of d's parent ConditionalDistributions must already be part of the joint model. 
-        Any inputs *not* part of the current joint model are assumed to be free inputs of the joint model. 
+        Any inputs *not* part of the current joint model are assumed to be free inputs of 
+        the joint model. 
         """
+
+        if d.model is None:
+            d.model = self
+        else:
+            assert(d.model == self)
         
         for param, inp_name in d.inputs_random.items():
             node, name = inp_name
@@ -41,11 +44,10 @@ class JointModel(ConditionalDistribution):
                 
         self._components.append(d)
 
-
     def _input_shape(self, param):
         (node, subparam) = param
         return node._input_shape(subparam)
-    
+
     def variational_model(self):
         # TODO this is still really sketchy.
         # basic idea is that we want a variational model to
@@ -84,7 +86,7 @@ class JointModel(ConditionalDistribution):
         return all_newnodes
     """
      
-    def marginalize(self, model_var, q_dist):
+    def marginalize(self, model_var, q_dist=None):
         """
         model_var: name of one of this JointModel's output variables
         q_dist: a Q distribution with which to integrate out that variable
@@ -94,7 +96,12 @@ class JointModel(ConditionalDistribution):
                 to be optimized. 
         """
         key = sugar_fullname(model_var)
-        self._explicit_marginalizations[key] = q_dist 
+        vnode, vname = key
+
+        if q_dist is None:
+            q_dist = model_var._default_variational_model(vname)
+
+        self._explicit_marginalizations[key] = q_dist
         self._explicit_marginalizations_reverse[q_dist] = key
         
     def _match_variational_names(self, variational_sample):
@@ -116,7 +123,7 @@ class JointModel(ConditionalDistribution):
         
     def observe(self, model_var, val):
         tf_value = tf.convert_to_tensor(val)
-        q_dist = WrapperNode(tf_value, name="observed_" + namestr(model_var))
+        q_dist = WrapperNode(tf_value, name="observed_" + namestr(model_var), model=None)
         self.marginalize(model_var, q_dist)
 
     def _topo_sorted(self):
@@ -333,3 +340,4 @@ class JointModel(ConditionalDistribution):
             except Exception as e:
                 print "cannot initialize node", self.name, "qdist", qdist, e
     """
+
