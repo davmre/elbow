@@ -7,32 +7,6 @@ import bayesflow as bf
 import bayesflow.util as util
 from bayesflow.models.q_distributions import ObservedQDistribution, GaussianQDistribution
 
-def sugar_fullname(name):
-    """
-    Allow omitting the output name when passing a node with a single output
-    """
-    
-    if isinstance(name, ConditionalDistribution):
-        outputs = name.outputs()
-        if len(outputs) > 1:
-            raise Exception("ConditionalDistribution %s has multiple outputs %s, please specify which one you want! Use a tuple (node, output_name)." % (name, outputs))
-        elif len(outputs) == 0:
-            raise Exception("ConditionalDistribution %s has no outputs!" % (name,))
-        else:
-            return (name, outputs[0])
-    else:
-        return name
-
-def namestr(name):
-    if isinstance(name, str):
-        return name
-    else:
-        node, subname = name
-        return str(node) + "_" + namestr(subname)
-
-def univariate(d):
-    assert(len(d) == 1)
-    return d.values()[0]
         
 class ConditionalDistribution(object):
     """
@@ -55,13 +29,7 @@ class ConditionalDistribution(object):
         
         self.minibatch_scale_factor = minibatch_scale_factor
 
-        self._shape = {}
-        if isinstance(shape, dict):
-            self._shape.update(shape)
-        elif len(self.outputs()) == 1:
-            self._shape[self.name] = shape
-        else:
-            raise Exception("could not interpret shape", shape)
+        self.shape = shape
             
         # store map of input local names to the canonical names, that
         # is, (node, name) pairs -- modeling those params.
@@ -70,7 +38,7 @@ class ConditionalDistribution(object):
         for input_name, default_constructor in self.inputs().items():
             # inputs can be provided as constants, or nodes modeled by bayesflow distributions.
             if isinstance(kwargs[input_name], ConditionalDistribution):
-                self.inputs_random[input_name] = sugar_fullname(kwargs[input_name])
+                self.inputs_random[input_name] = kwargs[input_name]
             elif kwargs[input_name] is not None:
                 # if inputs are provided as TF or numpy values, just store that directly
                 tf_value = tf.convert_to_tensor(kwargs[input_name], dtype=tf.float32)
@@ -82,19 +50,10 @@ class ConditionalDistribution(object):
         # if not already specified, compute the shape of the output at
         # this node as a function of its inputs
         if shape is None:
-            input_shapes = {name + "_shape": node.shape(localname) for (name, (node, localname)) in self.inputs_random.items()}
+            input_shapes = {name + "_shape": node.shape for (name, node) in self.inputs_random.items()}
             input_shapes.update({name + "_shape": tnode.get_shape() for (name, tnode) in self.inputs_nonrandom.items()})
-            self._shape[self.name] = self._compute_shape(**input_shapes)
+            self.shape = self._compute_shape(**input_shapes)
 
-        # compute the list of all ancestor nodes in the graph, by
-        # merging the ancestor lists of the parent nodes.  Storing
-        # this for every node is slightly inefficient, but makes for
-        # simpler code by avoiding the need for a graph traversal when
-        # constructing joint quantities like the ELBO. This could be
-        # optimized if the ancestor lists ever become a performance
-        # bottleneck.
-        self.ancestors = set( [self,] + [ancestor for inp in self.inputs_random.values() if inp is not None for ancestor in inp[0].ancestors ] )
-    
         self._sampled_value = None
         self._sampled_value_seed = None
 
@@ -117,19 +76,13 @@ class ConditionalDistribution(object):
         # sample that we can use in monte carlo objectives. 
         all_random_sources = {}
         input_samples = {}
-        for param, (node, localname) in self.inputs_random.items():
-            input_samples[param] = node._sampled[localname]
+        for param, node in self.inputs_random.items():
+            input_samples[param] = node._sampled
             all_random_sources.update(node._sampled_source)
-        sampled_vals, my_source = self._parameterized_sample(**input_samples)
+        self._sampled, my_source = self._parameterized_sample(**input_samples)
         all_random_sources.update(my_source)
-        self._sampled = sampled_vals
         self._sampled_source = all_random_sources
         
-    def shape(self, rvname=None):
-        if rvname is None:
-            rvname = self.name
-        return self._shape[rvname]
-
     def input_val(self, input_name):
         # return a (Monte Carlo estimate of) the value for the given input.
         # This allows distributions to easily return their parameters, for example.
@@ -138,11 +91,7 @@ class ConditionalDistribution(object):
         if input_name in self.inputs_nonrandom:
             return self.inputs_nonrandom[input_name]
         else:
-            node, localname = self.inputs_random[input_name]
-            return node._sampled[localname]
-
-    def outputs(self):
-        return ('out',)
+            return self.inputs_random[input_name]._sampled
 
     def _parameterized_logp(self, *args, **kwargs):
         """
@@ -155,6 +104,9 @@ class ConditionalDistribution(object):
     def _parameterized_sample(self, *args, **kwargs):
         kwargs.update(self.inputs_nonrandom)
         return self._sample(*args, **kwargs)
+
+    def _entropy(self, *args, **kwargs):
+        return self._parameterized_logp(*args, result=self._sample, **kwargs)
     
     def _entropy_lower_bound(self, *args, **kwargs):
         """
@@ -172,7 +124,7 @@ class ConditionalDistribution(object):
         for (q_key, qdist) in kwargs.items():
             assert(q_key.startswith("q_"))
             key = q_key[2:]
-            samples[key] = qdist.sample
+            samples[key] = qdist._sampled
         return self._parameterized_logp(**samples)
 
     def _optimized_params(self, sess, feed_dict=None):
@@ -185,26 +137,19 @@ class ConditionalDistribution(object):
         assert(self.model is not None)
         self.model.marginalize(self, q)
 
-    def observe(self, val, varname=None):
+    def observe(self, val):
         assert(self.model is not None)
-        if varname is None:
-            varname = self.name
-        self.model.observe((self, varname), val)
+        self.model.observe(self, val)
 
-    def sample(self, varname=None):
+    def sample(self):
         assert(self.model is not None)
-        if varname is None:
-            outputs = self.outputs()
-            assert(len(outputs)==1)
-            varname = outputs[0]
-        sampled = self._sampled[(self, varname)]
-        return sampled
+        return self._sampled
     
     def __str__(self):
         return repr(self)
 
     def __repr__(self):
-        return str(self.__class__.__name__) + "_" + namestr(self.name) 
+        return str(self.__class__.__name__) + "_" + self.name
 
 class WrapperNode(ConditionalDistribution):
     """
@@ -214,22 +159,17 @@ class WrapperNode(ConditionalDistribution):
 
     def __init__(self, tf_value, **kwargs):
         self.tf_value = tf_value
+        self.mean = tf_value
+        self.variance = tf.zeros_like(self.mean, name="variance")
+        
         shape = tf_value.get_shape()
         super(WrapperNode, self).__init__(shape=shape, tf_value=tf_value, **kwargs)
         
-        #self.ancestors = set()
-        #self.inputs_random = {}
-        #self.inputs_nonrandom = {}
-
-        #print "WN name", name
-        #if isinstance(name, tuple):
-        #    import pdb; pdb.set_trace()
-
     def inputs(self):
         return {"tf_value": None}
         
     def _sample(self, tf_value):
-        return {self.name: tf_value}, {}
+        return tf_value, {}
 
     def _logp(self, **kwargs):
         return tf.constant(0.0, dtype=tf.float32), {}
@@ -237,8 +177,6 @@ class WrapperNode(ConditionalDistribution):
     def _entropy(self, **kwargs):
         return tf.constant(0.0, dtype=tf.float32)
 
-    def outputs(self):
-        return (self.name,)
 
 _bf_jointmodel_stack_ = ()
 class JMContext(object):

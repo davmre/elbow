@@ -13,11 +13,9 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         # so that the marginal variance of the result equals
         # the marginal variance of the inputs
         self.rescale = rescale
-        self.K = A.shape()[1]
+        self.K = A.shape[1]
         
         super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std,  **kwargs) 
-
-
         
     def inputs(self):
         return {"A": unconstrained, "B": unconstrained, "std": positive_exp}
@@ -35,24 +33,25 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         return A_dtype
         
     def _sample(self, A, B, std):
-        shape = self.shape()
-        eps = tf.placeholder(shape=shape, dtype=self.dtype)
+        eps = tf.placeholder(shape=self.shape, dtype=self.dtype)
         def random_source():
-            return np.asarray(np.random.randn(*shape), dtype=np.float32)
+            return np.asarray(np.random.randn(*self.shape), dtype=np.float32)
 
         prod = tf.matmul(A, tf.transpose(B))
         if self.rescale:
             prod /= float(self.K)
 
-        return {self.name: eps * std + prod}, {eps: random_source}
+        return eps * std + prod, {eps: random_source}
 
     def _logp(self, result, A, B, std):
         prod = tf.matmul(A, tf.transpose(B))
         lp = tf.reduce_sum(bf.dists.gaussian_log_density(result, mean=prod, stddev=std))
         return lp
 
-    def _expected_logp(self, q_result, q_A, q_B, q_std):
-        std = q_std._sampled_tf[q_std.name][0]
+    def _expected_logp(self, q_result, q_A, q_B, q_std=None):
+
+        std = q_std._sampled if q_std is not None else self.inputs_nonrandom['std']
+        
         var = q_result.variance + tf.square(std)
             
         mA, vA = q_A.mean, q_A.variance

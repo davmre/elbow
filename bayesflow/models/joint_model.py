@@ -4,7 +4,7 @@ import tensorflow as tf
 import uuid
 import copy
 
-from bayesflow.models import ConditionalDistribution, WrapperNode, JMContext, sugar_fullname, namestr
+from bayesflow.models import ConditionalDistribution, WrapperNode, JMContext
 
 class JointModel(ConditionalDistribution):
 
@@ -37,10 +37,9 @@ class JointModel(ConditionalDistribution):
         else:
             assert(d.model == self)
         
-        for param, inp_name in d.inputs_random.items():
-            node, name = inp_name
+        for param, node in d.inputs_random.items():
             if node not in self._components:
-                self.inputs_random[(d, param)] = (node, name)
+                self.inputs_random[(d, param)] = node
                 
         self._components.append(d)
 
@@ -59,12 +58,11 @@ class JointModel(ConditionalDistribution):
         
         if self._explicit_variational_model is None:
             vm_joint = JointModel()
-            for (vname, (qdist, qval)) in self._explicit_marginalizations.items():
+            for (vname, qdist) in self._explicit_marginalizations.items():
                 vm_joint.extend(qdist)
 
             self._explicit_variational_model = vm_joint
 
-        
         return self._explicit_variational_model
      
     def marginalize(self, model_var, q_dist=None):
@@ -76,17 +74,11 @@ class JointModel(ConditionalDistribution):
                 but gains the inputs of the Q distribution as parameters
                 to be optimized. 
         """
-        key = sugar_fullname(model_var)
-        vnode, vname = key
-
         if q_dist is None:
             q_dist = model_var._default_variational_model()
 
-        if isinstance(q_dist, ConditionalDistribution):
-            q_dist = (q_dist, q_dist.outputs()[0])
-            
-        self._explicit_marginalizations[key] = 
-        self._explicit_marginalizations_reverse[q_dist] = key
+        self._explicit_marginalizations[model_var] = q_dist
+        self._explicit_marginalizations_reverse[q_dist] = model_var
         
     def _match_variational_names(self, variational_sample):
 
@@ -114,26 +106,25 @@ class JointModel(ConditionalDistribution):
     
     def observe(self, model_var, val):
         tf_value = tf.convert_to_tensor(val)
-        q_dist = WrapperNode(tf_value, name="observed_" + namestr(model_var), model=None)
+        q_dist = WrapperNode(tf_value, name="observed_" + model_var.name, model=None)
         self.marginalize(model_var, q_dist)
 
+
+    def outputs(self):
+        """The set of variables output by a JointModel includes all outputs
+        of all components that have not been marginalized away.  Note
+        that this is *not* just leaves of the DAG. The JointModel
+        defined by p(A, B) = p(A)p(B|A) has both A and B as outputs.
+        """
+        non_marginalized = [node for node in self._components if node not in self._explicit_marginalizations.keys()]
+        return non_marginalized
+        
     def _topo_sorted(self):
         # currently the extend method guarantees topo sorting,
         # in general we might need to actually run an algorithm here. 
         return self._components
             
-    def outputs(self):
-        """
-        The set of variables output by a JointModel includes all outputs of all components that have 
-        not been marginalized away. 
-        Note that this is *not* just leaves of the DAG. The JointModel defined by p(A, B) = p(A)p(B|A)
-        has both A and B as outputs. 
-        """
-        potential = [(node, output) for node in self._components for output in node.outputs()]
-        non_marginalized = [name for name in potential if name not in self._explicit_marginalizations.keys()]
-        return non_marginalized
-    
-    def _sample(self, filter_outputs = True, **input_vals):
+    def _sample(self, **input_vals):
 
         """
         Given:
@@ -148,24 +139,12 @@ class JointModel(ConditionalDistribution):
         random_sources = {}
         
         for component in self._topo_sorted():
-            component_inputs = {}
-            for input_name_local, input_source_name in component.inputs_random.items():
-                component_inputs[input_name_local] = sampled_vals[input_source_name]
-
-            component_sample, component_random_source = component._parameterized_sample(**component_inputs)
-            random_sources.update(component_random_source)            
-            sampled_vals.update({(component, local_name): val for (local_name, val) in component_sample.items()})
-
+            random_sources.update(component._sampled_source)            
+            sampled_vals[component.name] = component._sampled
+            
         def sample_all_sources():
             return {placeholder : source() for (placeholder, source) in random_sources.items()}
 
-        if filter_outputs:
-            # To preserve encapsulation, don't return samples for intermediate variables.
-            # This is enabled by default to force thinking about encapsulation, but
-            # probably should be disabled in the most common use cases (sampling from
-            # variational models, generating synth data for model criticism)
-            outputs = self.outputs()
-            sampled_vals = {name: val for (name, val) in sampled_vals.items() if name in outputs}
             
         return sampled_vals, sample_all_sources
 
@@ -189,14 +168,8 @@ class JointModel(ConditionalDistribution):
         
         vm = self.variational_model()
         q_sample, stochastic_eps_fn = vm._sample()
-        q_entropy = vm._entropy_lower_bound(sample=q_sample)
+        q_entropy = vm._entropy_lower_bound()
 
-        my_sample = self._match_variational_names(q_sample)
-        
-        all_vals = copy.copy(point_vals)
-        all_vals.update(my_sample)
-
-        
         component_lps = []
         for component in self._topo_sorted():
 
@@ -209,52 +182,26 @@ class JointModel(ConditionalDistribution):
                     # assume nonrandom, continue...
                     continue
 
-            for param in component.outputs():
-                q_dist = self._explicit_marginalizations[(component, param)]
-                component_qs["q_"+ param] = q_dist
+            q_dist = self._explicit_marginalizations[component]
+            component_qs["q_result"] = q_dist
                 
             expected_lp = component._expected_logp(**component_qs)
             component_lps.append(expected_lp)
-            
-            """
-            component_vals = {}
-            for param in component.inputs().keys():
-                try:
-                    sourcenode, sourcename = component.inputs_random[param]
-                    component_vals[param] = all_vals[(sourcenode, sourcename)]
-                except KeyError:
-                    component_vals[param] = component.inputs_nonrandom[param]
-                    
-            if len(component.outputs()) == 1:
-                # HACK. the problem is each logp method takes in
-                # 'result'. it doesn't know its own output name (maybe
-                # it should?).
-                result = component.outputs()[0]
-                component_vals["result"] = all_vals[(component, result)]
-            else:
-                component_vals.update({param: all_vals[(component, param)] for param in component.outputs()})
-            
-            lp = component._logp(**component_vals)
-            component_lps.append(lp)
-            """
             
         joint_lp = tf.reduce_sum(tf.pack(component_lps))
         lp_bound = joint_lp + q_entropy
         
         return lp_bound, stochastic_eps_fn
     
-    def _entropy_lower_bound(self, sample, **point_vals):
+    def _entropy_lower_bound(self):
         """
         TODO check this is correct. and deal with the case of hierarchical variational models that are themselves marginalized...
         """
-
-        all_vals = copy.copy(point_vals)
-        all_vals.update(sample)
-
+        
         component_entropies = []
         for component in self._topo_sorted():
-            component_vals = {param : all_vals[sourcenode] for param, sourcenode in component.inputs_random.items()}
-            h = component._parameterized_entropy_lower_bound(**component_vals)
+            input_samples = {param : sourcenode._sampled for param, sourcenode in component.inputs_random.items()}
+            h = component._parameterized_entropy_lower_bound(**input_samples)
             component_entropies.append(h)
 
         joint_entropy = tf.reduce_sum(tf.pack(component_entropies))

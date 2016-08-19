@@ -25,7 +25,7 @@ def gaussian_mean_model():
         X = Gaussian(mean=mu, std=1, shape=(100,), name="X")
 
     sampled = jm.sample(seed=0)
-    sampled_X = sampled[(X, "X")]
+    sampled_X = sampled["X"]
     X.observe(sampled_X)
     jm.marginalize(mu)
 
@@ -38,7 +38,7 @@ def gaussian_lowrank_model():
         C = NoisyGaussianMatrixProduct(A=A, B=B, std=0.1, name="C")
 
     sampled = jm.sample(seed=0)
-    sampled_C = sampled[(C, "C")]
+    sampled_C = sampled["C"]
     C.observe(sampled_C)
     jm.marginalize(A)
     jm.marginalize(B)

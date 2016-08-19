@@ -57,7 +57,7 @@ def main():
     
     posterior = model.train()
 
-    #print posterior
+    print posterior
     
     #print model.posterior('mu')
     

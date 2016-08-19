@@ -184,15 +184,14 @@ class Gaussian(ConditionalDistribution):
         return ("out",)
     
     def _sample(self, mean, std):
-        shape = self.shape()
-        eps = tf.placeholder(shape=shape, dtype=self.dtype)
+        eps = tf.placeholder(shape=self.shape, dtype=self.dtype)
         def random_source():
-            return np.asarray(np.random.randn(*shape), dtype=np.float32)
+            return np.asarray(np.random.randn(*self.shape), dtype=np.float32)
         
-        return {self.outputs()[0]: eps * std + mean}, {eps: random_source}
+        return  eps * std + mean, {eps: random_source}
     
-    def _logp(self, out, mean, std):
-        lp = tf.reduce_sum(bf.dists.gaussian_log_density(out, mean=mean, stddev=std))
+    def _logp(self, result, mean, std):
+        lp = tf.reduce_sum(bf.dists.gaussian_log_density(result, mean=mean, stddev=std))
         return lp
 
     def _entropy(self, std, **kwargs):
@@ -202,29 +201,25 @@ class Gaussian(ConditionalDistribution):
     def _default_variational_model(self, vname=None):
         if vname is None:
             vname = self.name
-        return Gaussian(shape=self.shape(), name="q_"+vname, model=None)
+        return Gaussian(shape=self.shape, name="q_"+vname, model=None)
 
-    def _expected_logp(self, q_out, q_mean=None, q_std=None):
+    def _expected_logp(self, q_result, q_mean=None, q_std=None):
 
         def get_sample(q, param):
-            if q is None:
-                return self.inputs_nonrandom[param]
-            else:
-                qnode, qname = q
-                return q._sampled[qname]
+            return self.inputs_nonrandom[param] if q is None else q._sampled
             
         std_sample = get_sample(q_std, 'std')
         mean_sample = get_sample(q_mean, 'mean')
-        out_sample = q_out._sampled['out']
+        out_sample = q_result._sampled
         
-        if isinstance(q_out, Gaussian) and not isinstance(q_mean, Gaussian):
-            cross = bf.dists.gaussian_cross_entropy(q_out.mean, q_out.variance, mean_sample, tf.square(std_sample))
+        if isinstance(q_result, Gaussian) and not isinstance(q_mean, Gaussian):
+            cross = bf.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, mean_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
-        elif not isinstance(q_out, Gaussian) and isinstance(q_mean, Gaussian):
+        elif not isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
             cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance, out_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
-        elif isinstance(q_out, Gaussian) and isinstance(q_mean, Gaussian):
-            cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance + q_out.variance, q_out.mean, tf.square(std_sample))
+        elif isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
+            cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance + q_result.variance, q_result.mean, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         else:
             elp = self._logp(out=out_sample, mean=mean_sample, std=std_sample)
@@ -235,7 +230,7 @@ class Gaussian(ConditionalDistribution):
 
     def _input_shape(self, param):
         assert (param in self.inputs().keys())
-        return self.shape()
+        return self.shape
     
     def _compute_dtype(self, mean_dtype, std_dtype):
         assert(mean_dtype==std_dtype)
