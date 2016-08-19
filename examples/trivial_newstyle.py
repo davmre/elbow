@@ -49,13 +49,13 @@ def main():
     sX = np.float32(np.random.randn(N) + 4.3)
 
     outputs = model.outputs()
-    #x = outputs[0]
-    #model.observe(x, sX)
+    x = outputs[0]
+    model.observe(x, sX)
 
     print model.outputs()
-    print model.inputs()
+
     
-    #posterior = model.train()
+    posterior = model.train()
 
     #print posterior
     

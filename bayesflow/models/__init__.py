@@ -29,7 +29,11 @@ def namestr(name):
     else:
         node, subname = name
         return str(node) + "_" + namestr(subname)
-    
+
+def univariate(d):
+    assert(len(d) == 1)
+    return d.values()[0]
+        
 class ConditionalDistribution(object):
     """
     
@@ -51,8 +55,13 @@ class ConditionalDistribution(object):
         
         self.minibatch_scale_factor = minibatch_scale_factor
 
-        if shape is not None:
-            self.shape = shape
+        self._shape = {}
+        if isinstance(shape, dict):
+            self._shape.update(shape)
+        elif len(self.outputs()) == 1:
+            self._shape[self.name] = shape
+        else:
+            raise Exception("could not interpret shape", shape)
             
         # store map of input local names to the canonical names, that
         # is, (node, name) pairs -- modeling those params.
@@ -72,11 +81,11 @@ class ConditionalDistribution(object):
                 
         # if not already specified, compute the shape of the output at
         # this node as a function of its inputs
-        if self.shape is None:
-            input_shapes = {name + "_shape": node.shape for (name,node) in self.inputs_random.items()}
-            input_shape.update({name + "_shape": tnode.get_shape() for (name, tnode) in self.inputs_nonrandom.items()})
-            self.shape = self._compute_shape(**input_shapes)
-        
+        if shape is None:
+            input_shapes = {name + "_shape": node.shape(localname) for (name, (node, localname)) in self.inputs_random.items()}
+            input_shapes.update({name + "_shape": tnode.get_shape() for (name, tnode) in self.inputs_nonrandom.items()})
+            self._shape[self.name] = self._compute_shape(**input_shapes)
+
         # compute the list of all ancestor nodes in the graph, by
         # merging the ancestor lists of the parent nodes.  Storing
         # this for every node is slightly inefficient, but makes for
@@ -100,9 +109,40 @@ class ConditionalDistribution(object):
         if model is not None:
             # will set self.model on this rv
             model.extend(self)
+
+        # define a canonical 'sample' for this variable
+        # in terms of canonical samples for the input variables.
+        # this is useful when defining variational posteriors,
+        # since passing a posterior automatically passes a
+        # sample that we can use in monte carlo objectives. 
+        all_random_sources = {}
+        input_samples = {}
+        for param, (node, localname) in self.inputs_random.items():
+            input_samples[param] = node._sampled[localname]
+            all_random_sources.update(node._sampled_source)
+        sampled_vals, my_source = self._parameterized_sample(**input_samples)
+        all_random_sources.update(my_source)
+        self._sampled = sampled_vals
+        self._sampled_source = all_random_sources
         
+    def shape(self, rvname=None):
+        if rvname is None:
+            rvname = self.name
+        return self._shape[rvname]
+
+    def input_val(self, input_name):
+        # return a (Monte Carlo estimate of) the value for the given input.
+        # This allows distributions to easily return their parameters, for example.
+        # Note these estimates depend on a random source function, which we do *not*
+        # return here, but could easily be fulfilled from self._sampled at this node.
+        if input_name in self.inputs_nonrandom:
+            return self.inputs_nonrandom[input_name]
+        else:
+            node, localname = self.inputs_random[input_name]
+            return node._sampled[localname]
+
     def outputs(self):
-        return (self.name,)
+        return ('out',)
 
     def _parameterized_logp(self, *args, **kwargs):
         """
@@ -113,10 +153,6 @@ class ConditionalDistribution(object):
         return self._logp(*args, **kwargs)
 
     def _parameterized_sample(self, *args, **kwargs):
-        """
-        Compute the log probability using the values of all fixed input
-        parameters associated with this graph node.
-        """
         kwargs.update(self.inputs_nonrandom)
         return self._sample(*args, **kwargs)
     
@@ -137,21 +173,38 @@ class ConditionalDistribution(object):
             assert(q_key.startswith("q_"))
             key = q_key[2:]
             samples[key] = qdist.sample
-        return self._logp(**samples)
+        return self._parameterized_logp(**samples)
 
     def _optimized_params(self, sess, feed_dict=None):
         optimized_params = {}
         for name, node in self.inputs_nonrandom.items():
             optimized_params[name] = sess.run(node, feed_dict = None)
         return optimized_params
-            
+
+    def attach_q(self, q):
+        assert(self.model is not None)
+        self.model.marginalize(self, q)
+
+    def observe(self, val, varname=None):
+        assert(self.model is not None)
+        if varname is None:
+            varname = self.name
+        self.model.observe((self, varname), val)
+
+    def sample(self, varname=None):
+        assert(self.model is not None)
+        if varname is None:
+            outputs = self.outputs()
+            assert(len(outputs)==1)
+            varname = outputs[0]
+        sampled = self._sampled[(self, varname)]
+        return sampled
+    
     def __str__(self):
         return repr(self)
 
     def __repr__(self):
         return str(self.__class__.__name__) + "_" + namestr(self.name) 
-
-
 
 class WrapperNode(ConditionalDistribution):
     """
@@ -161,9 +214,8 @@ class WrapperNode(ConditionalDistribution):
 
     def __init__(self, tf_value, **kwargs):
         self.tf_value = tf_value
-        shape = self.shape = tf_value.get_shape()
-        super(WrapperNode, self).__init__(shape=shape, **kwargs)
-        
+        shape = tf_value.get_shape()
+        super(WrapperNode, self).__init__(shape=shape, tf_value=tf_value, **kwargs)
         
         #self.ancestors = set()
         #self.inputs_random = {}
@@ -174,10 +226,10 @@ class WrapperNode(ConditionalDistribution):
         #    import pdb; pdb.set_trace()
 
     def inputs(self):
-        return {}
+        return {"tf_value": None}
         
-    def _sample(self):
-        return {self.name: self.tf_value}, lambda : {}
+    def _sample(self, tf_value):
+        return {self.name: tf_value}, {}
 
     def _logp(self, **kwargs):
         return tf.constant(0.0, dtype=tf.float32), {}

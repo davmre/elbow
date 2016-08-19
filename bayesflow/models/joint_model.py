@@ -59,32 +59,13 @@ class JointModel(ConditionalDistribution):
         
         if self._explicit_variational_model is None:
             vm_joint = JointModel()
-            for (vname, q) in self._explicit_marginalizations.items():
-                vm_joint.extend(q)
+            for (vname, (qdist, qval)) in self._explicit_marginalizations.items():
+                vm_joint.extend(qdist)
 
             self._explicit_variational_model = vm_joint
 
         
         return self._explicit_variational_model
-
-    """
-    def optimize_free_inputs(self):
-        
-        all_newnodes = []
-        for component in self._topo_sorted():
-            newnodes = component.optimize_free_inputs()
-            all_newnodes.extend(newnodes)
-
-
-        HACK: adding optimizations will create WrapperNodes that become
-        part of this joint model. The correct thing would be for those
-        nodes to add *themselves* to the JointModel upon creation, but
-        until that's implemented...
-
-        self._components = all_newnodes + self._components
-            
-        return all_newnodes
-    """
      
     def marginalize(self, model_var, q_dist=None):
         """
@@ -99,9 +80,12 @@ class JointModel(ConditionalDistribution):
         vnode, vname = key
 
         if q_dist is None:
-            q_dist = model_var._default_variational_model(vname)
+            q_dist = model_var._default_variational_model()
 
-        self._explicit_marginalizations[key] = q_dist
+        if isinstance(q_dist, ConditionalDistribution):
+            q_dist = (q_dist, q_dist.outputs()[0])
+            
+        self._explicit_marginalizations[key] = 
         self._explicit_marginalizations_reverse[q_dist] = key
         
     def _match_variational_names(self, variational_sample):
@@ -120,7 +104,14 @@ class JointModel(ConditionalDistribution):
             print "WARNING IGNORING VARIATIONAL NAME", vname
             renamed_sample[mkey] = val
         return renamed_sample
-        
+
+    def attach_variational_model(self, vm):
+        # given a variational model, figure out which variational
+        # names correspond to which object-level names. this means we
+        # require either that the names match, or that we provide an
+        # explciit mapping...
+        raise Exception("not yet implemented")
+    
     def observe(self, model_var, val):
         tf_value = tf.convert_to_tensor(val)
         q_dist = WrapperNode(tf_value, name="observed_" + namestr(model_var), model=None)
@@ -154,23 +145,19 @@ class JointModel(ConditionalDistribution):
         """
 
         sampled_vals = {(self, param): val for (param, val) in input_vals.items()}
-        random_sources = []
+        random_sources = {}
         
         for component in self._topo_sorted():
-
             component_inputs = {}
             for input_name_local, input_source_name in component.inputs_random.items():
                 component_inputs[input_name_local] = sampled_vals[input_source_name]
 
             component_sample, component_random_source = component._parameterized_sample(**component_inputs)
-            random_sources.append(component_random_source)            
+            random_sources.update(component_random_source)            
             sampled_vals.update({(component, local_name): val for (local_name, val) in component_sample.items()})
 
         def sample_all_sources():
-            all_sources = {}
-            for rs in random_sources:
-                all_sources.update(rs())
-            return all_sources
+            return {placeholder : source() for (placeholder, source) in random_sources.items()}
 
         if filter_outputs:
             # To preserve encapsulation, don't return samples for intermediate variables.
@@ -182,6 +169,17 @@ class JointModel(ConditionalDistribution):
             
         return sampled_vals, sample_all_sources
 
+    def sample(self, seed=0):
+        sampled_vals, sample_all_sources = self._sample()
+
+        init = tf.initialize_all_variables()
+        sess = tf.Session()
+        sess.run(init)
+
+        np.random.seed(seed)
+        fd = sample_all_sources()
+        return {name: sess.run(val, feed_dict=fd) for (name, val) in sampled_vals.items()}
+        
     def _logp(self, **point_vals):
         """
         Compute a (stochastic estimate of) a lower bound on the log probability of 
@@ -190,17 +188,35 @@ class JointModel(ConditionalDistribution):
         """
         
         vm = self.variational_model()
-        q_sample, stochastic_eps_fn = vm._sample(filter_outputs=False)
+        q_sample, stochastic_eps_fn = vm._sample()
         q_entropy = vm._entropy_lower_bound(sample=q_sample)
 
         my_sample = self._match_variational_names(q_sample)
         
         all_vals = copy.copy(point_vals)
         all_vals.update(my_sample)
+
         
         component_lps = []
         for component in self._topo_sorted():
 
+            component_qs = {}
+            for param in component.inputs().keys():
+                try:
+                    q_dist = self._explicit_marginalizations[component.inputs_random[param]]
+                    component_qs["q_" + param] = q_dist
+                except KeyError:
+                    # assume nonrandom, continue...
+                    continue
+
+            for param in component.outputs():
+                q_dist = self._explicit_marginalizations[(component, param)]
+                component_qs["q_"+ param] = q_dist
+                
+            expected_lp = component._expected_logp(**component_qs)
+            component_lps.append(expected_lp)
+            
+            """
             component_vals = {}
             for param in component.inputs().keys():
                 try:
@@ -220,7 +236,8 @@ class JointModel(ConditionalDistribution):
             
             lp = component._logp(**component_vals)
             component_lps.append(lp)
-
+            """
+            
         joint_lp = tf.reduce_sum(tf.pack(component_lps))
         lp_bound = joint_lp + q_entropy
         
@@ -254,7 +271,6 @@ class JointModel(ConditionalDistribution):
         return posterior_vals
         
     def train(self, steps=200, adam_rate=0.1, debug=False, return_session=False):
-
         elbo, sample_stochastic = self._logp()
 
         try:
@@ -282,6 +298,7 @@ class JointModel(ConditionalDistribution):
             print i, elbo_val
 
         posterior = self.posterior(sess, fd)
+
         #fd = sample_stochastic()    
         #elbo_terms = decompose_elbo(sess, fd)
         #posterior = inspect_posterior(sess, fd)
@@ -308,11 +325,8 @@ class JointModel(ConditionalDistribution):
             
         return self._q_distribution
 
-
-
     def attach_q(self, q_distribution):
         # TODO check that the types and shape of the Q distribution match
-
         if self._q_distribution is not None:
             raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
 

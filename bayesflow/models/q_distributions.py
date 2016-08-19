@@ -179,8 +179,6 @@ class SimplexQDistribution(QDistribution):
             shifted = implied_log - implied_log[-1]
             self.gaussian_q.initialize_to_value(shifted[:-1])
         
-
-
 def posdef_variable(n, init_log_diag=-10):
     # parameterize M = A' diag(d) A
     # where we'd like to constrain A to be triangular
@@ -223,7 +221,6 @@ class LinearGaussianChainCRF(QDistribution):
                 unary_factors.append(unary_factor)
             self._unary_factors = unary_factors
             
-        
         self.stochastic_eps = tf.placeholder(dtype=np.float32, shape=self.output_shape, name="eps")
 
         self._back_filtered, self._logZ = self._pass_messages_backwards()

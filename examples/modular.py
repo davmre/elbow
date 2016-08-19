@@ -4,10 +4,10 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-from bayesflow.models import FlatDistribution
-from bayesflow.models.elementary import GaussianMatrix, BernoulliMatrix, BetaMatrix, DirichletMatrix
-from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
-from bayesflow.models.matrix_decompositions import *
+from bayesflow.models import JMContext
+from bayesflow.models.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
+#from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
+from bayesflow.models.factorizations import *
 from bayesflow.models.transforms import PointwiseTransformedMatrix, PointwiseTransformedQDistribution
 from bayesflow.models.neural import VAEEncoder, VAEDecoderBernoulli, init_weights, init_zero_vector
 from bayesflow.models.train import optimize_elbo, print_inference_summary
@@ -19,23 +19,31 @@ models and inference routines from modular components.
 
 
 def gaussian_mean_model():
-    mu = GaussianMatrix(mean=0, std=10, output_shape=(1,))
-    X = GaussianMatrix(mean=mu, std=1, output_shape=(100,))
 
-    sampled_X = X.sample(seed=2)
+    with JMContext() as jm:
+        mu = Gaussian(mean=0, std=10, shape=(1,), name="mu")
+        X = Gaussian(mean=mu, std=1, shape=(100,), name="X")
+
+    sampled = jm.sample(seed=0)
+    sampled_X = sampled[(X, "X")]
     X.observe(sampled_X)
+    jm.marginalize(mu)
 
-    return X
+    return jm
     
 def gaussian_lowrank_model():
-    A = GaussianMatrix(mean=0.0, std=1.0, output_shape=(100, 3), name="A")
-    B = GaussianMatrix(mean=0.0, std=1.0, output_shape=(100, 3), name="B")
-    C = NoisyGaussianMatrixProduct(A=A, B=B, std=0.1, name="noise")
+    with JMContext() as jm:
+        A = Gaussian(mean=0.0, std=1.0, shape=(100, 3), name="A")
+        B = Gaussian(mean=0.0, std=1.0, shape=(100, 3), name="B")
+        C = NoisyGaussianMatrixProduct(A=A, B=B, std=0.1, name="C")
 
-    sampled_C = C.sample(seed=0)
+    sampled = jm.sample(seed=0)
+    sampled_C = sampled[(C, "C")]
     C.observe(sampled_C)
+    jm.marginalize(A)
+    jm.marginalize(B)
 
-    return C
+    return jm
     
 def gaussian_randomwalk_model():
     A = GaussianMatrix(mean=0.0, std=1.0, output_shape=(100, 2), name="A")
@@ -138,23 +146,22 @@ def autoencoder():
 
 def main():
 
-
+    """
     print "gaussian mean estimation"
-    obs_node = gaussian_mean_model()
-    elbo_terms, posterior = optimize_elbo(obs_node)
-    print_inference_summary(elbo_terms, posterior)
-
-
+    model = gaussian_mean_model()
+    posterior = model.train(steps=500)
+    print posterior
+    """
+    
     print "gaussian matrix factorization"
-    obs_node = gaussian_lowrank_model()
-    elbo_terms, posterior = optimize_elbo(obs_node)
-    print_inference_summary(elbo_terms, posterior)
+    model = gaussian_lowrank_model()
+    posterior = model.train(steps=500)
+    print posterior
 
     print "gaussian random walk"
     obs_node = gaussian_randomwalk_model()
     elbo_terms, posterior = optimize_elbo(obs_node)
     print_inference_summary(elbo_terms, posterior)
-
     
     print "gaussian mixture model"
     obs_node = clustering_gmm_model()
@@ -165,7 +172,6 @@ def main():
     obs_node = latent_feature_model()
     elbo_terms, posterior = optimize_elbo(obs_node, steps=300)
     print_inference_summary(elbo_terms, posterior)
-
 
     print "bayesian sparsity"
     obs_node = sparsity()
