@@ -24,17 +24,63 @@ class DeterministicTransform(ConditionalDistribution):
         super(DeterministicTransform, self).__init__(A=A, **kwargs)
         
     def inputs(self):
-        return ("A")
+        return {"A": None}
         
     def _logp(self, result, A):
+        return tf.constant(0.0, dtype=tf.float32)
+
+    def _entropy(self, A):
         return tf.constant(0.0, dtype=tf.float32)
         
     def _compute_dtype(self, A_dtype):
         return A_dtype
 
-    def attach_q(self, qdist):
+    def deterministic(self):
+        return True
+
+    def marginalize(self, qdist):
         raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
 
+
+class PointwiseTransformedMatrix(DeterministicTransform):
+
+    def __init__(self, A, transform, implicit=False, **kwargs):
+
+        # cases:
+        # a) we want to construct an encapsulated ConditionalDistribution
+        # that composes A with the transform. Here A exists outside
+        # the graph and is just a convenience object used in the
+        # construction. In that case we want the *current* object to
+        # explicitly call out to A for sampling, entropy, etc
+
+        # b) we want to add a deterministic variable to a graph that already contains
+        #    the parent A. In this case the conditional distribution is really a delta,
+        #    and the joint distribution p(A, B) is just p(A)delta(A==B). So the log 
+        #    jacobian does not appear. This is the "implicit" case. 
+        
+        self.implicit = implicit
+        self.transform=transform
+        super(PointwiseTransformedMatrix, self).__init__(A=A, **kwargs)
+        
+    def _compute_shape(self, A_shape):
+        return A_shape
+
+    def _sample(self, A):
+        tA, log_jacobian = self.transform(A)
+        # HACK
+        self._sampled_log_jacobian = log_jacobian
+        return tA
+    
+    def _entropy(self, *args, **kwargs):
+        if self.implicit:
+            return tf.constant(0.0, dtype=tf.float32)
+        else:
+            return self.inputs_random["A"]._sampled_entropy + self._sampled_log_jacobian
+
+    def _default_variational_model(self):
+        # todo figure out a global view of how I should put Q distributions on deterministic variables
+        pass
+            
     
 class TransposeQDistribution(QDistribution):
     def __init__(self, parent_q):
@@ -99,20 +145,13 @@ class Transpose(DeterministicTransform):
         parent_q = self.input_nodes["A"].q_distribution()
         return TransposeQDistribution(parent_q)
         
-
+"""
 class PointwiseTransformedQDistribution(QDistribution):
     def __init__(self, parent_q, transform, implicit=False):
 
         super(PointwiseTransformedQDistribution, self).__init__(shape=parent_q.output_shape)
         self.sample, self.log_jacobian = transform(parent_q.sample)
 
-        # an "implicit" transformation is a formal object associated with a deterministic
-        # transformation in the model, where the parent q distribution is associated with
-        # the untransformed variable. In this case the ELBO expectations are with respect
-        # to the parent Q distribution, so the jacobian of the transformation does not appear.
-        # By contrast, a non-implicit use of a transformed Q distribution would be to create
-        # a new type of distribution (eg, lognormal by exponentiating a Gaussian parent)
-        # that could then itself be associated with stochastic variables in the graph.
         self.implicit = implicit
         self.parent_q = parent_q
         
@@ -127,25 +166,4 @@ class PointwiseTransformedQDistribution(QDistribution):
             return tf.constant(0.0, dtype=tf.float32)
         else:
             return self.parent_q.entropy() + self.log_jacobian
-        
-
-    
-class PointwiseTransformedMatrix(DeterministicTransform):
-
-    def __init__(self, A, transform, **kwargs):
-        self.transform=transform
-        super(PointwiseTransformedMatrix, self).__init__(A=A, **kwargs)        
-        
-    def _compute_shape(self, A_shape):
-        return A_shape
-
-    def _sample(self, A):
-        tA, _ = self.transform(A)
-        return tA
-    
-    def attach_q(self, qdist):
-        raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
-
-    def default_q(self):
-        parent_q = self.input_nodes["A"].q_distribution()
-        return PointwiseTransformedQDistribution(parent_q, self.transform, implicit=True)
+"""

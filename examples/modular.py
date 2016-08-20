@@ -6,9 +6,8 @@ import bayesflow.util as util
 
 from bayesflow.models import JMContext
 from bayesflow.models.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
-#from bayesflow.models.q_distributions import DeltaQDistribution, GaussianQDistribution, BernoulliQDistribution, SimplexQDistribution
 from bayesflow.models.factorizations import *
-from bayesflow.models.transforms import PointwiseTransformedMatrix, PointwiseTransformedQDistribution
+from bayesflow.models.transforms import PointwiseTransformedMatrix
 from bayesflow.models.neural import VAEEncoder, VAEDecoderBernoulli, init_weights, init_zero_vector
 from bayesflow.models.train import optimize_elbo, print_inference_summary
 
@@ -46,13 +45,15 @@ def gaussian_lowrank_model():
     return jm
     
 def gaussian_randomwalk_model():
-    A = GaussianMatrix(mean=0.0, std=1.0, output_shape=(100, 2), name="A")
-    C = NoisyCumulativeSum(A=A, std=0.1, name="noise")
+    with JMContext() as jm:
+        A = Gaussian(mean=0.0, std=1.0, shape=(100, 2), name="A")
+        C = NoisyCumulativeSum(A=A, std=0.1, name="C")
 
-    sampled_C = C.sample(seed=0)
-    C.observe(sampled_C)
-
-    return C
+    sampled = jm.sample(seed=0)
+    C.observe(sampled["C"])
+    jm.marginalize(A)
+    
+    return jm
 
 def clustering_gmm_model(n_clusters = 4,
                          cluster_center_std = 5.0,
@@ -60,20 +61,22 @@ def clustering_gmm_model(n_clusters = 4,
                          n_points = 500,
                          dim = 2):
 
-    centers = GaussianMatrix(mean=0.0, std=cluster_center_std, output_shape=(n_clusters, dim), name="centers")
+    with JMContext() as jm:
+        centers = Gaussian(mean=0.0, std=cluster_center_std, shape=(n_clusters, dim), name="centers")
+        weights = DirichletMatrix(alpha=1.0,
+                                  shape=(n_clusters,),
+                                  name="weights")
+        X = GMMClustering(weights=weights, centers=centers,
+                          std=cluster_spread_std, shape=(n_points, dim), name="X")
 
-    weights = DirichletMatrix(alpha=1.0,
-                              output_shape=(n_clusters,),
-                              name="weights")
+        
+    sampled = jm.sample(seed=0)
+    X.observe(sampled["X"])
 
-
-    X = GMMClustering(weights=weights, centers=centers,
-                      std=cluster_spread_std, output_shape=(n_points, dim), name="noise")
-
-    sampled_X = X.sample(seed=0)
-    X.observe(sampled_X)
-
-    return X
+    jm.marginalize(centers)
+    jm.marginalize(weights)
+    
+    return jm
 
 def latent_feature_model():
     K = 3
@@ -82,26 +85,33 @@ def latent_feature_model():
 
     a, b = np.float32(1.0), np.float32(1.0)
 
-    pi = BetaMatrix(alpha=a, beta=b, output_shape=(K,), name="pi")
-    B = BernoulliMatrix(p=pi, output_shape=(N, K), name="B")
-    G = GaussianMatrix(mean=0.0, std=1.0, output_shape=(K, D), name="G")
-    D = NoisyLatentFeatures(B=B, G=G, std=0.1, name="noise")
+    with JMContext() as jm:
+        pi = BetaMatrix(alpha=a, beta=b, shape=(K,), name="pi")
+        B = BernoulliMatrix(p=pi, shape=(N, K), name="B")
+        G = Gaussian(mean=0.0, std=1.0, shape=(K, D), name="G")
+        D = NoisyLatentFeatures(B=B, G=G, std=0.1, name="D")
+        
+    sampled = jm.sample(seed=0)
+    D.observe(sampled["D"])
+    jm.marginalize(pi)
+    jm.marginalize(B)
+    jm.marginalize(G)
 
-    sampled_D = D.sample(seed=0)
-    D.observe(sampled_D)
-
-    return D
+    return jm
 
 
 def sparsity():
-    G1 = GaussianMatrix(mean=0, std=1.0, output_shape=(100,10), name="G1")
-    expG1 = PointwiseTransformedMatrix(G1, bf.transforms.exp, name="expG1")
-    X = MultiplicativeGaussianNoise(expG1, 1.0, name="multGaussian")
+    with JMContext() as jm:
+        G1 = Gaussian(mean=0, std=1.0, shape=(100,10), name="G1")
+        expG1 = PointwiseTransformedMatrix(G1, bf.transforms.exp, name="expG1")
+        X = MultiplicativeGaussianNoise(expG1, 1.0, name="X")
 
-    sampled_X = X.sample()
-    X.observe(sampled_X)
+    sampled = jm.sample()
+    X.observe(sampled["X"])
 
-    return X
+    jm.marginalize(G1)
+    
+    return jm
 
 def autoencoder():
     d_z = 2
@@ -151,37 +161,42 @@ def main():
     model = gaussian_mean_model()
     posterior = model.train(steps=500)
     print posterior
-    """
+
     
     print "gaussian matrix factorization"
     model = gaussian_lowrank_model()
     posterior = model.train(steps=500)
     print posterior
 
-    print "gaussian random walk"
-    obs_node = gaussian_randomwalk_model()
-    elbo_terms, posterior = optimize_elbo(obs_node)
-    print_inference_summary(elbo_terms, posterior)
     
+    print "gaussian random walk"
+    model = gaussian_randomwalk_model()
+    posterior = model.train(steps=1000)
+    print posterior
+
     print "gaussian mixture model"
-    obs_node = clustering_gmm_model()
-    elbo_terms, posterior = optimize_elbo(obs_node)
-    print_inference_summary(elbo_terms, posterior)
+    model = clustering_gmm_model()
+    posterior = model.train(steps=1000)
+    print posterior
+
     
     print "latent features"
-    obs_node = latent_feature_model()
-    elbo_terms, posterior = optimize_elbo(obs_node, steps=300)
-    print_inference_summary(elbo_terms, posterior)
-
+    model = latent_feature_model()
+    posterior = model.train(steps=1000)
+    print posterior
+    """
+    
     print "bayesian sparsity"
-    obs_node = sparsity()
-    elbo_terms, posterior = optimize_elbo(obs_node)
-    print_inference_summary(elbo_terms, posterior)
+    model = sparsity()
+    posterior = model.train(steps=1000)
+    print posterior
 
+    return
+    
     print "variational autoencoder"
-    obs_node = autoencoder()
-    elbo_terms, posterior = optimize_elbo(obs_node, adam_rate=0.001)
-    print_inference_summary(elbo_terms, posterior)
+    model = autoencoder()
+    posterior = model.train(steps=1000, adam_rate=0.001)
+    print posterior
     
     
 if __name__ == "__main__":

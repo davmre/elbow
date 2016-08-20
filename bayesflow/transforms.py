@@ -16,7 +16,6 @@ def logit(x, clip_finite=True):
             jacobian = tf.clip_by_value(jacobian, 1e-45, 1e38, name="clipped_jacobian")
         log_jacobian = tf.reduce_sum(tf.log(jacobian))
         
-
     return transformed, log_jacobian
 
 def normalize(x_positive):

@@ -4,6 +4,7 @@ import tensorflow as tf
 import uuid
 import copy
 
+from bayesflow.models.transforms import PointwiseTransformedMatrix
 from bayesflow.models import ConditionalDistribution, WrapperNode, JMContext
 
 class JointModel(ConditionalDistribution):
@@ -136,28 +137,20 @@ class JointModel(ConditionalDistribution):
         """
 
         sampled_vals = {(self, param): val for (param, val) in input_vals.items()}
-        random_sources = {}
         
         for component in self._topo_sorted():
-            random_sources.update(component._sampled_source)            
             sampled_vals[component.name] = component._sampled
             
-        def sample_all_sources():
-            return {placeholder : source() for (placeholder, source) in random_sources.items()}
-
-            
-        return sampled_vals, sample_all_sources
+        return sampled_vals
 
     def sample(self, seed=0):
-        sampled_vals, sample_all_sources = self._sample()
-
+        tf.set_random_seed(seed)
+        sampled_vals = self._sample()
+        
         init = tf.initialize_all_variables()
         sess = tf.Session()
         sess.run(init)
-
-        np.random.seed(seed)
-        fd = sample_all_sources()
-        return {name: sess.run(val, feed_dict=fd) for (name, val) in sampled_vals.items()}
+        return {name: sess.run(val) for (name, val) in sampled_vals.items()}
         
     def _logp(self, **point_vals):
         """
@@ -167,20 +160,37 @@ class JointModel(ConditionalDistribution):
         """
         
         vm = self.variational_model()
-        q_sample, stochastic_eps_fn = vm._sample()
+        q_sample = vm._sample()
         q_entropy = vm._entropy_lower_bound()
 
         component_lps = []
         for component in self._topo_sorted():
 
+            if component.deterministic():
+                continue
+            
             component_qs = {}
             for param in component.inputs().keys():
                 try:
-                    q_dist = self._explicit_marginalizations[component.inputs_random[param]]
-                    component_qs["q_" + param] = q_dist
+                    input_node = component.inputs_random[param]
                 except KeyError:
                     # assume nonrandom, continue...
                     continue
+
+                try:
+                    q_dist = self._explicit_marginalizations[input_node]
+                except KeyError:
+                    # deal with Q distributions for deterministic transforms
+                    # TODO this is a total hack
+                    assert(isinstance(component.inputs_random[param], PointwiseTransformedMatrix))
+                    # create a "default" Q distribution based on the parent
+                    parents = input_node.inputs_random.values()
+                    assert(len(parents) == 1)
+                    parent_q = self._explicit_marginalizations[parents[0]]
+                    q_dist = PointwiseTransformedMatrix(parent_q, input_node.transform, implicit=True, model=vm)
+
+                component_qs["q_" + param] = q_dist
+
 
             q_dist = self._explicit_marginalizations[component]
             component_qs["q_result"] = q_dist
@@ -191,7 +201,7 @@ class JointModel(ConditionalDistribution):
         joint_lp = tf.reduce_sum(tf.pack(component_lps))
         lp_bound = joint_lp + q_entropy
         
-        return lp_bound, stochastic_eps_fn
+        return lp_bound
     
     def _entropy_lower_bound(self):
         """
@@ -218,7 +228,7 @@ class JointModel(ConditionalDistribution):
         return posterior_vals
         
     def train(self, steps=200, adam_rate=0.1, debug=False, return_session=False):
-        elbo, sample_stochastic = self._logp()
+        elbo = self._logp()
 
         try:
             train_step = tf.train.AdamOptimizer(adam_rate).minimize(-elbo)
@@ -234,17 +244,15 @@ class JointModel(ConditionalDistribution):
         sess = tf.Session()
         sess.run(init)
         for i in range(steps):
-            fd = sample_stochastic()
-
             if debug:
-                sess.run(debug_ops, feed_dict = fd)
+                sess.run(debug_ops)
 
-            sess.run(train_step, feed_dict = fd)
+            sess.run(train_step)
 
-            elbo_val = sess.run((elbo), feed_dict=fd)
+            elbo_val = sess.run((elbo))
             print i, elbo_val
 
-        posterior = self.posterior(sess, fd)
+        posterior = self.posterior(sess)
 
         #fd = sample_stochastic()    
         #elbo_terms = decompose_elbo(sess, fd)

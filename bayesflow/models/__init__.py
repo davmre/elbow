@@ -74,20 +74,15 @@ class ConditionalDistribution(object):
         # this is useful when defining variational posteriors,
         # since passing a posterior automatically passes a
         # sample that we can use in monte carlo objectives. 
-        all_random_sources = {}
         input_samples = {}
         for param, node in self.inputs_random.items():
             input_samples[param] = node._sampled
-            all_random_sources.update(node._sampled_source)
-        self._sampled, my_source = self._parameterized_sample(**input_samples)
-        all_random_sources.update(my_source)
-        self._sampled_source = all_random_sources
+        self._sampled = self._parameterized_sample(**input_samples)
+        self._sampled_entropy = self._parameterized_entropy_lower_bound(**input_samples)
         
     def input_val(self, input_name):
         # return a (Monte Carlo estimate of) the value for the given input.
         # This allows distributions to easily return their parameters, for example.
-        # Note these estimates depend on a random source function, which we do *not*
-        # return here, but could easily be fulfilled from self._sampled at this node.
         if input_name in self.inputs_nonrandom:
             return self.inputs_nonrandom[input_name]
         else:
@@ -106,7 +101,7 @@ class ConditionalDistribution(object):
         return self._sample(*args, **kwargs)
 
     def _entropy(self, *args, **kwargs):
-        return self._parameterized_logp(*args, result=self._sample, **kwargs)
+        return -self._parameterized_logp(*args, result=self._sampled, **kwargs)
     
     def _entropy_lower_bound(self, *args, **kwargs):
         """
@@ -144,6 +139,9 @@ class ConditionalDistribution(object):
     def sample(self):
         assert(self.model is not None)
         return self._sampled
+
+    def deterministic(self):
+        return False
     
     def __str__(self):
         return repr(self)
@@ -169,7 +167,7 @@ class WrapperNode(ConditionalDistribution):
         return {"tf_value": None}
         
     def _sample(self, tf_value):
-        return tf_value, {}
+        return tf_value
 
     def _logp(self, **kwargs):
         return tf.constant(0.0, dtype=tf.float32), {}
