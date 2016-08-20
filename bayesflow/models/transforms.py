@@ -81,89 +81,169 @@ class PointwiseTransformedMatrix(DeterministicTransform):
         # todo figure out a global view of how I should put Q distributions on deterministic variables
         pass
             
+
+
+class Transform(object):
+
+    @staticmethod
+    def transform(return_log_jac=False, **kwargs):
+        raise Exception("abstract base class")
+
+    @staticmethod
+    def inverse(transformed):
+        raise Exception("not invertible!")
+
+    @staticmethod
+    def output_shape(input_shape):
+        # default to assuming a pointwise transform
+        return input_shape
     
-class TransposeQDistribution(QDistribution):
-    def __init__(self, parent_q):
-        N, D = parent_q.output_shape
-        transposed_shape = (D, N)
-        self.parent_q = parent_q
+class Logit(Transform):
+
+    @staticmethod
+    def transform(x, return_log_jac=False, clip_finite=True, **kwargs):
+        if clip_finite:
+            x = tf.clip_by_value(x, -88, 88, name="clipped_logit_input")
+        transformed = 1.0 / (1 + tf.exp(-x))
         
-        super(TransposeQDistribution, self).__init__(shape=transposed_shape)
+        if return_log_jac:
+            jacobian = transformed * (1-transformed)
+            if clip_finite:
+                jacobian = tf.clip_by_value(jacobian, 1e-45, 1e38, name="clipped_jacobian")
+            log_jacobian = tf.reduce_sum(tf.log(jacobian))
+            return transformed, log_jacobian
+        else:
+            return transformed
 
-        for param in parent_q.params():
-            self.__dict__[param] = tf.transpose(parent_q.__dict__[param])
+    @staticmethod
+    def inverse(transformed):
+        x = tf.log(1./transformed - 1.0)
+        return x
 
-        self.sample = tf.transpose(parent_q.sample)
+class Normalize(Transform):
+
+    @staticmethod
+    def transform(x_positive, return_log_jac=False, **kwargs):
+        n = util.extract_shape(x_positive)[0]
+        Z = tf.reduce_sum(x_positive)
+        transformed = x_positive / Z
+        if return_log_jac:
+            log_jacobian = -n * tf.log(Z)
+            return transformed, log_jacobian
+        else:
+            return transformed
+
+class Exp(Transform):
+
+    @staticmethod
+    def transform(x, return_log_jac=False, clip_finite=True):
+        if clip_finite:
+            x = tf.clip_by_value(x, -88, 88, name="clipped_exp_input")
+
+        transformed = tf.exp(x)
+        if return_log_jac:
+            log_jacobian = tf.reduce_sum(x)
+            return transformed, log_jacobian
+        else:
+            return transformed
+
+class Square(Transform):
+
+    @staticmethod
+    def transform(x, return_log_jac=False, **kwargs):
+        transformed = x * x
+
+        if return_log_jac:
+            log_jacobian = tf.reduce_sum(tf.log(x)) + np.log(2)
+            return transformed, log_jacobian
+        else:
+            return transformed
+
+class Sqrt(Transform):
+
+    @staticmethod
+    def transform(x, return_log_jac=False, **kwargs):
+        transformed = tf.sqrt(x)
+        if return_log_jac:
+            jacobian = .5/transformed
+            log_jacobian = tf.reduce_sum(tf.log(jacobian))
+            return transformed, log_jacobian
+        else:
+            return transformed
+
+        
+class Reciprocal(Transform):
+
+    @staticmethod
+    def transform(x, return_log_jac=False, clip_finite=True):
+        if clip_finite:
+            # caution: assumes input is positive
+            x = tf.clip_by_value(x, 1e-38, 1e38, name="clipped_reciprocal_input")
             
-        # HACKS
-        try:
-            self.variance = tf.transpose(parent_q.variance)
-        except:
-            pass
-        try:
-            self.stddev = tf.transpose(parent_q.stddev)
-        except:
-            pass
-        try:
-            self.mean = tf.transpose(parent_q.mean)
-        except:
-            pass
+        nlogx = -tf.log(x)
+        transformed = tf.exp(nlogx)
         
-    def sample_stochastic_inputs(self):
-        return self.parent_q.sample_stochastic_inputs()
-        
-    def entropy(self):        
-        return tf.constant(0.0, dtype=tf.float32)
-
-    def initialize_to_value(self, x):
-        self.parent_q.initialize_to_value(x.T)
-    
-class Transpose(DeterministicTransform):
-    def __init__(self, A, **kwargs):
-        super(Transpose, self).__init__(A=A, **kwargs)
-        
-    def _sample(self, A):
-        return A.T
-    
-    def _compute_shape(self, A_shape):
-        N, D = A_shape
-        return (D, N)
-
-    def attach_q(self, qdist):
-        """
-        Try to attach a transformed Q to the parent instead...
-        """
-
-        parent = self.input_nodes["A"]
-        parent_q = TransposeQDistribution(qdist)
-        parent.attach_q(parent_q)
-
-        self._q_distribution = qdist
-        #super(Transpose, self).attach_q(qdist)
-        
-    def default_q(self):            
-        parent_q = self.input_nodes["A"].q_distribution()
-        return TransposeQDistribution(parent_q)
-        
-"""
-class PointwiseTransformedQDistribution(QDistribution):
-    def __init__(self, parent_q, transform, implicit=False):
-
-        super(PointwiseTransformedQDistribution, self).__init__(shape=parent_q.output_shape)
-        self.sample, self.log_jacobian = transform(parent_q.sample)
-
-        self.implicit = implicit
-        self.parent_q = parent_q
-        
-    def sample_stochastic_inputs(self):
-        if self.implicit:
-            return {}
+        if return_log_jac:
+            log_jacobian = 2*tf.reduce_sum(nlogx)
+            return transformed, log_jacobian
         else:
-            return self.parent_q.sample_stochastic_inputs()
+            return transformed
+
+def chain_transforms(*transforms):
+    class Chain(Transform):
+
+        @staticmethod
+        def transform(x, return_log_jac=False):
+            log_jacs = []
+            for transform in transforms:
+                if return_log_jac:
+                    x, lj = transform.transform(x, return_log_jac=return_log_jac)
+                    log_jacs.append(lj)
+                else:
+                    x = transform.transform(x, return_log_jac=return_log_jac)
+            if return_log_jac:
+                return x, tf.reduce_sum(tf.pack(log_jacs))
+            else:
+                return x
+
+        @staticmethod
+        def inverse(transformed):
+            for transform in transforms[::-1]:
+                transformed = transform.inverse(transform)
+            return transform
+
+        @staticmethod
+        def output_shape(input_shape):
+            for transform in transforms:
+                input_shape = transform.output_shape(input_shape)
+            return input_shape
         
-    def entropy(self):
-        if self.implicit:
-            return tf.constant(0.0, dtype=tf.float32)
+    return Chain
+
+Reciprocal_Sqrt = chain_transforms(Reciprocal, Sqrt)
+Reciprocal_Square = chain_transforms(Reciprocal, Square)
+Exp_Reciprocal = chain_transforms(Exp, Reciprocal)
+Simplex_Raw = chain_transforms(Exp, Normalize)
+
+class Transpose(Transform):
+    # todo should there be a special property for permutation
+    # transforms, so that we also transform means, variances, etc?
+
+    @staticmethod
+    def transform(x, return_log_jac=False):
+        transformed = tf.transpose(x)
+        if return_log_jac:
+            return transformed, 0.0
         else:
-            return self.parent_q.entropy() + self.log_jacobian
-"""
+            return transformed
+
+    @staticmethod
+    def inverse(transformed):
+        return tf.transpose(transformed)
+
+    @staticmethod
+    def output_shape(input_shape):
+        N, M = input_shape
+        return (M, N)
+
+
