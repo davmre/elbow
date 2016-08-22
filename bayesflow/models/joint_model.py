@@ -4,7 +4,7 @@ import tensorflow as tf
 import uuid
 import copy
 
-from bayesflow.models.transforms import PointwiseTransformedMatrix
+from bayesflow.models.transforms import DeterministicTransform
 from bayesflow.models import ConditionalDistribution, WrapperNode, JMContext
 
 class JointModel(ConditionalDistribution):
@@ -76,8 +76,12 @@ class JointModel(ConditionalDistribution):
                 to be optimized. 
         """
         if q_dist is None:
-            q_dist = model_var._default_variational_model()
+            component_qs = self._get_input_qs(model_var)
+            q_dist = model_var._default_variational_model(**component_qs)
 
+            
+            
+            
         self._explicit_marginalizations[model_var] = q_dist
         self._explicit_marginalizations_reverse[q_dist] = model_var
         
@@ -151,7 +155,20 @@ class JointModel(ConditionalDistribution):
         sess = tf.Session()
         sess.run(init)
         return {name: sess.run(val) for (name, val) in sampled_vals.items()}
-        
+
+    def _get_input_qs(self, component):
+        component_qs = {}
+        for param in component.inputs().keys():
+            try:
+                input_node = component.inputs_random[param]
+            except KeyError:
+                # assume nonrandom, continue...
+                continue
+
+            q_dist = self._explicit_marginalizations[input_node]
+            component_qs["q_" + param] = q_dist
+        return component_qs
+    
     def _logp(self, **point_vals):
         """
         Compute a (stochastic estimate of) a lower bound on the log probability of 
@@ -166,35 +183,10 @@ class JointModel(ConditionalDistribution):
         component_lps = []
         for component in self._topo_sorted():
 
-            if component.deterministic():
-                continue
-            
-            component_qs = {}
-            for param in component.inputs().keys():
-                try:
-                    input_node = component.inputs_random[param]
-                except KeyError:
-                    # assume nonrandom, continue...
-                    continue
-
-                try:
-                    q_dist = self._explicit_marginalizations[input_node]
-                except KeyError:
-                    # deal with Q distributions for deterministic transforms
-                    # TODO this is a total hack
-                    assert(isinstance(component.inputs_random[param], PointwiseTransformedMatrix))
-                    # create a "default" Q distribution based on the parent
-                    parents = input_node.inputs_random.values()
-                    assert(len(parents) == 1)
-                    parent_q = self._explicit_marginalizations[parents[0]]
-                    q_dist = PointwiseTransformedMatrix(parent_q, input_node.transform, implicit=True, model=vm)
-
-                component_qs["q_" + param] = q_dist
-
-
+            component_qs = self._get_input_qs(component)
             q_dist = self._explicit_marginalizations[component]
             component_qs["q_result"] = q_dist
-                
+            
             expected_lp = component._expected_logp(**component_qs)
             component_lps.append(expected_lp)
             
@@ -265,48 +257,3 @@ class JointModel(ConditionalDistribution):
         #    return elbo_terms, posterior
         return posterior
     
-
-    """
-    COPIED from ConditionalDistribution originally...
- 
-    def q_distribution(self):
-        
-        if self._q_distribution is None:
-            default_q = self.default_q()
-
-            # explicitly use the superclass method since some subclasses
-            # may redefine attach_q to prevent user-attached q's
-            ConditionalDistribution.attach_q(self, default_q)
-            
-        return self._q_distribution
-
-    def attach_q(self, q_distribution):
-        # TODO check that the types and shape of the Q distribution match
-        if self._q_distribution is not None:
-            raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
-
-        assert(self.shape == q_distribution.shape)
-        
-        self._q_distribution = q_distribution
-    
-    def observe(self, observed_val):
-        qdist = ObservedQDistribution(observed_val)
-        self.attach_q(qdist)
-        return qdist
-
-    def default_q(self):
-        raise Exception("default Q distribution not implemented!")
-
-    def init_q_true(self):
-        for name, node in self.input_nodes.items():
-            node.init_q_true()
-        
-        qdist = self.q_distribution()
-        if not isinstance(qdist, ObservedQDistribution):
-            try:
-                qdist.initialize_to_value(self._sampled_value)
-                print "initialized", self.name, qdist
-            except Exception as e:
-                print "cannot initialize node", self.name, "qdist", qdist, e
-    """
-

@@ -7,7 +7,7 @@ import bayesflow.util as util
 from bayesflow.models import JMContext
 from bayesflow.models.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
 from bayesflow.models.factorizations import *
-from bayesflow.models.transforms import PointwiseTransformedMatrix
+from bayesflow.models.transforms import DeterministicTransform, Exp
 from bayesflow.models.neural import VAEEncoder, VAEDecoderBernoulli, init_weights, init_zero_vector
 from bayesflow.models.train import optimize_elbo, print_inference_summary
 
@@ -103,7 +103,7 @@ def latent_feature_model():
 def sparsity():
     with JMContext() as jm:
         G1 = Gaussian(mean=0, std=1.0, shape=(100,10), name="G1")
-        expG1 = PointwiseTransformedMatrix(G1, bf.transforms.exp, name="expG1")
+        expG1 = DeterministicTransform(G1, Exp, name="expG1")
         X = MultiplicativeGaussianNoise(expG1, 1.0, name="X")
 
     sampled = jm.sample()

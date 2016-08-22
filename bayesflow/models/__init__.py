@@ -29,35 +29,19 @@ class ConditionalDistribution(object):
         
         self.minibatch_scale_factor = minibatch_scale_factor
 
-        self.shape = shape
-            
+        self.shape = shape            
         # store map of input local names to the canonical names, that
         # is, (node, name) pairs -- modeling those params.
         self.inputs_random = {}
         self.inputs_nonrandom = {}
-        for input_name, default_constructor in self.inputs().items():
-            # inputs can be provided as constants, or nodes modeled by bayesflow distributions.
-            if isinstance(kwargs[input_name], ConditionalDistribution):
-                self.inputs_random[input_name] = kwargs[input_name]
-            elif kwargs[input_name] is not None:
-                # if inputs are provided as TF or numpy values, just store that directly
-                tf_value = tf.convert_to_tensor(kwargs[input_name], dtype=tf.float32)
-                self.inputs_nonrandom[input_name] = tf_value
-            elif kwargs[input_name] is None:
-                # free inputs will be optimized over
-                self.inputs_nonrandom[input_name] = default_constructor(shape=self._input_shape(input_name))
-                
+        self._setup_inputs(**kwargs)
+        
         # if not already specified, compute the shape of the output at
         # this node as a function of its inputs
         if shape is None:
             input_shapes = {name + "_shape": node.shape for (name, node) in self.inputs_random.items()}
             input_shapes.update({name + "_shape": tnode.get_shape() for (name, tnode) in self.inputs_nonrandom.items()})
             self.shape = self._compute_shape(**input_shapes)
-
-        self._sampled_value = None
-        self._sampled_value_seed = None
-
-        self._q_distribution = None
 
         # TODO do something sane here...
         self.dtype = tf.float32
@@ -69,6 +53,35 @@ class ConditionalDistribution(object):
             # will set self.model on this rv
             model.extend(self)
 
+        self._setup_canonical_sample()
+
+    def _setup_inputs(self, **kwargs):
+        """
+        Called by the constructor to process inputs passed as random variables, 
+        fixed values, or (if passed as None) parameters to be optimized over. 
+
+        The result is to populate 
+          self.inputs_random
+          self.inputs_nonrandom
+        which map input names to ConditionalDist objects and Tensors, respectively. 
+
+        This method can be overridden by classes that need to do some other
+        form of crazy input processing. 
+        """
+        
+        for input_name, default_constructor in self.inputs().items():
+            # inputs can be provided as constants, or nodes modeled by bayesflow distributions.
+            if isinstance(kwargs[input_name], ConditionalDistribution):
+                self.inputs_random[input_name] = kwargs[input_name]
+            elif kwargs[input_name] is not None:
+                # if inputs are provided as TF or numpy values, just store that directly
+                tf_value = tf.convert_to_tensor(kwargs[input_name], dtype=tf.float32)
+                self.inputs_nonrandom[input_name] = tf_value
+            elif kwargs[input_name] is None:
+                # free inputs will be optimized over
+                self.inputs_nonrandom[input_name] = default_constructor(shape=self._input_shape(input_name))
+        
+    def _setup_canonical_sample(self):
         # define a canonical 'sample' for this variable
         # in terms of canonical samples for the input variables.
         # this is useful when defining variational posteriors,
@@ -79,7 +92,7 @@ class ConditionalDistribution(object):
             input_samples[param] = node._sampled
         self._sampled = self._parameterized_sample(**input_samples)
         self._sampled_entropy = self._parameterized_entropy_lower_bound(**input_samples)
-        
+                
     def input_val(self, input_name):
         # return a (Monte Carlo estimate of) the value for the given input.
         # This allows distributions to easily return their parameters, for example.
@@ -140,9 +153,6 @@ class ConditionalDistribution(object):
         assert(self.model is not None)
         return self._sampled
 
-    def deterministic(self):
-        return False
-    
     def __str__(self):
         return repr(self)
 

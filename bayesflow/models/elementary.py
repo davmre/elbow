@@ -7,7 +7,7 @@ import bayesflow.util as util
 from bayesflow.models import ConditionalDistribution, JMContext, current_scope
 from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
 from bayesflow.transforms import normalize
-from bayesflow.models.transforms import PointwiseTransformedMatrix
+#from bayesflow.models.transforms import PointwiseTransformedMatrix
 
 import scipy.stats
 
@@ -34,9 +34,10 @@ class GammaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
-    def _default_variational_model(self):
-        q1 = Gaussian(shape=self.shape, model=None)
-        return PointwiseTransformedMatrix(q1, bf.transforms.exp, model=None)
+    def _default_variational_model(self, **kwargs):
+        raise NotImplementedError
+        #q1 = Gaussian(shape=self.shape, model=None)
+        #return PointwiseTransformedMatrix(q1, bf.transforms.exp, model=None)
 
     def reparameterized(self):
         return False
@@ -66,7 +67,7 @@ class BetaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
-    def _default_variational_model(self):
+    def _default_variational_model(self, **kwargs):
         q1 = Gaussian(shape=self.shape, model=None)
         return PointwiseTransformedMatrix(q1, bf.transforms.logit, model=None)
 
@@ -108,7 +109,7 @@ class DirichletMatrix(ConditionalDistribution):
     def _compute_dtype(self, alpha_dtype):
         return alpha_dtype
 
-    def _default_variational_model(self):
+    def _default_variational_model(self, **kwargs):
         return SimplexTransformedGaussian(shape=(self.K,), name="q_"+self.name, model=None)
     
     def reparameterized(self):
@@ -153,7 +154,7 @@ class BernoulliMatrix(ConditionalDistribution):
     def _compute_dtype(self, p_dtype):
         return np.int32
 
-    def _default_variational_model(self):
+    def _default_variational_model(self, **kwargs):
         return BernoulliMatrix(shape=self.shape, model=None)
     
     def reparameterized(self):
@@ -201,39 +202,6 @@ class MultinomialMatrix(ConditionalDistribution):
     def reparameterized(self):
         return False
 
-
-
-def transformed_distribution(base_dist, transform):
-
-    class TransformedDistribution(ConditionalDistribution):
-        
-        def __init__(self, shape, **kwargs):
-
-            self.base = base_dist(shape=shape, model=None)
-            super(TransformedDistribution, self).__init__(**kwargs)
-
-        def inputs(self):
-            return self.base.inputs()
-            
-        def _compute_shape(self, *args, **kwargs):
-            base_shape = self.base.shape
-            # TODO implement this with transforms that can govern shape properly...
-            #transformed_shape = 
-
-        def _sample(self, **kwargs):
-            pass
-        
-        def _logp(self, **kwargs):
-            pass
-
-        def _expected_logp(self, **kwargs):
-            pass
-
-        def _entropy(self, **kwargs):
-            pass
-
-    return TransformedDistribution
-#SimplexTransformedGaussian = transformed_distribution(Gaussian, padded_simplex)
 
 class SimplexTransformedGaussian(ConditionalDistribution):
     # temporary hack all around. need to figure out the generic form for a deterministic transform. I think this requires:
@@ -309,7 +277,7 @@ class Gaussian(ConditionalDistribution):
         variance = std**2
         return tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
 
-    def _default_variational_model(self):
+    def _default_variational_model(self, **kwargs):
         return Gaussian(shape=self.shape, name="q_"+self.name, model=None)
 
     def _expected_logp(self, q_result, q_mean=None, q_std=None):
