@@ -5,7 +5,7 @@ def concrete_shape(shape):
     if isinstance(shape, tuple):
         return shape
     elif isinstance(shape, tf.TensorShape):
-        return tuple([d.value for d in t.get_shape()])
+        return tuple([d.value for d in shape])
     else:
         raise Exception("don't know how to interpret %s as a tensor shape" % shape)
     

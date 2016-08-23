@@ -5,7 +5,7 @@ import uuid
 
 import bayesflow as bf
 import bayesflow.util as util
-from bayesflow.models.q_distributions import ObservedQDistribution, GaussianQDistribution
+
 
         
 class ConditionalDistribution(object):
@@ -16,7 +16,6 @@ class ConditionalDistribution(object):
 
     The inputs are assumed to be random variables described by their own respective distributions. 
     Thus the object graph implicitly represents a directed graphical model (Bayesian network).
-
     """
 
     def __init__(self, shape=None, minibatch_scale_factor = None,
@@ -26,7 +25,8 @@ class ConditionalDistribution(object):
             name = str(uuid.uuid4().hex)[:6]
             print "constructed name", name
         self.name = name
-        
+
+        self._q_distribution = None
         self.minibatch_scale_factor = minibatch_scale_factor
 
         self.shape = shape            
@@ -40,18 +40,11 @@ class ConditionalDistribution(object):
         # this node as a function of its inputs
         if shape is None:
             input_shapes = {name + "_shape": node.shape for (name, node) in self.inputs_random.items()}
-            input_shapes.update({name + "_shape": tnode.get_shape() for (name, tnode) in self.inputs_nonrandom.items()})
+            input_shapes.update({name + "_shape": util.concrete_shape(tnode.get_shape()) for (name, tnode) in self.inputs_nonrandom.items()})
             self.shape = self._compute_shape(**input_shapes)
 
         # TODO do something sane here...
         self.dtype = tf.float32
-
-        self.model = None
-        if model == "auto":
-            model = current_scope()
-        if model is not None:
-            # will set self.model on this rv
-            model.extend(self)
 
         self._setup_canonical_sample()
 
@@ -89,10 +82,18 @@ class ConditionalDistribution(object):
         # sample that we can use in monte carlo objectives. 
         input_samples = {}
         for param, node in self.inputs_random.items():
-            input_samples[param] = node._sampled
+            input_samples[param] = node._sampled            
         self._sampled = self._parameterized_sample(**input_samples)
-        self._sampled_entropy = self._parameterized_entropy_lower_bound(**input_samples)
-                
+        self._sampled_entropy = self._parameterized_entropy(**input_samples)
+
+    def sample(self, seed=0):
+        tf.set_random_seed(seed)
+        
+        init = tf.initialize_all_variables()
+        sess = tf.Session()
+        sess.run(init)
+        return sess.run(self._sampled)
+        
     def input_val(self, input_name):
         # return a (Monte Carlo estimate of) the value for the given input.
         # This allows distributions to easily return their parameters, for example.
@@ -115,16 +116,10 @@ class ConditionalDistribution(object):
 
     def _entropy(self, *args, **kwargs):
         return -self._parameterized_logp(*args, result=self._sampled, **kwargs)
-    
-    def _entropy_lower_bound(self, *args, **kwargs):
-        """
-        If a distribution defines an exact entropy, use that.
-        """
-        return self._entropy(*args, **kwargs)
 
-    def _parameterized_entropy_lower_bound(self, *args, **kwargs):
+    def _parameterized_entropy(self, *args, **kwargs):
         kwargs.update(self.inputs_nonrandom)
-        return self._entropy_lower_bound(*args, **kwargs)
+        return self._entropy(*args, **kwargs)
     
     def _expected_logp(self, **kwargs):
         # default implementation: compute E_q[ log p(x) ] as a Monte Carlo sample.
@@ -137,22 +132,43 @@ class ConditionalDistribution(object):
 
     def _optimized_params(self, sess, feed_dict=None):
         optimized_params = {}
-        for name, node in self.inputs_nonrandom.items():
-            optimized_params[name] = sess.run(node, feed_dict = None)
         return optimized_params
 
-    def attach_q(self, q):
-        assert(self.model is not None)
-        self.model.marginalize(self, q)
+    def expected_logp(self):
+        input_qs = {"q_"+name: node.q_distribution() for (name,node) in self.inputs_random.items()}
+        q = self.q_distribution()
+        with tf.name_scope(self.name + "_Elogp") as scope:
+            expected_lp = self._expected_logp(q_result = q, **input_qs)
+        return expected_lp
 
-    def observe(self, val):
-        assert(self.model is not None)
-        self.model.observe(self, val)
+    def entropy(self):
+        return self._sampled_entropy
+    
+    def q_distribution(self):
+        if self._q_distribution is None:
+            default_q = self.default_q()
+            
+            # explicitly use the superclass method since some subclasses
+            # may redefine attach_q to prevent user-attached q's
+            ConditionalDistribution.attach_q(self, default_q)
 
-    def sample(self):
-        assert(self.model is not None)
-        return self._sampled
+        return self._q_distribution
 
+    def attach_q(self, q_distribution):
+
+        if self._q_distribution is not None:
+            raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
+
+        assert(self.shape == q_distribution.shape)
+        self._q_distribution = q_distribution
+                                        
+    def observe(self, observed_val):
+        tf_value = tf.convert_to_tensor(observed_val)
+        q_dist = WrapperNode(tf_value, name="observed_" + self.name)
+        self.attach_q(q_dist)
+        return q_dist
+        
+    
     def __str__(self):
         return repr(self)
 
@@ -186,23 +202,3 @@ class WrapperNode(ConditionalDistribution):
         return tf.constant(0.0, dtype=tf.float32)
 
 
-_bf_jointmodel_stack_ = ()
-class JMContext(object):
-    def __init__(self, jm=None):
-        if jm is None:
-            from bayesflow.models.joint_model import JointModel
-            jm = JointModel()
-        self.jm = jm
-
-    def __enter__(self):
-        global _bf_jointmodel_stack_
-        _bf_jointmodel_stack_ = _bf_jointmodel_stack_ + (self.jm,)        
-        return self.jm
-    
-    def __exit__(self, type, value, traceback):
-        global _bf_jointmodel_stack_
-        _bf_jointmodel_stack_ = _bf_jointmodel_stack_[:-1]
-        
-def current_scope():
-    global _bf_jointmodel_stack_
-    return _bf_jointmodel_stack_[-1]

@@ -109,5 +109,3 @@ def simplex(x):
     else:
         xmax = tf.reduce_max(x)
     return simplex_raw(x - xmax)
-    
-

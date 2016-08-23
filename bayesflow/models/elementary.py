@@ -4,10 +4,10 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-from bayesflow.models import ConditionalDistribution, JMContext, current_scope
+from bayesflow.models import ConditionalDistribution
 from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
 from bayesflow.transforms import normalize
-#from bayesflow.models.transforms import PointwiseTransformedMatrix
+from bayesflow.models.transforms import Logit, Simplex, TransformedDistribution
 
 import scipy.stats
 
@@ -34,7 +34,7 @@ class GammaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
-    def _default_variational_model(self, **kwargs):
+    def default_q(self, **kwargs):
         raise NotImplementedError
         #q1 = Gaussian(shape=self.shape, model=None)
         #return PointwiseTransformedMatrix(q1, bf.transforms.exp, model=None)
@@ -67,14 +67,12 @@ class BetaMatrix(ConditionalDistribution):
         assert(alpha_dtype==beta_dtype)
         return alpha_dtype
 
-    def _default_variational_model(self, **kwargs):
-        q1 = Gaussian(shape=self.shape, model=None)
-        return PointwiseTransformedMatrix(q1, bf.transforms.logit, model=None)
+    def default_q(self, **kwargs):
+        q1 = Gaussian(shape=self.shape)
+        return TransformedDistribution(q1, Logit)
 
     def reparameterized(self):
         return False
-
-
 
         
 class DirichletMatrix(ConditionalDistribution):
@@ -109,8 +107,10 @@ class DirichletMatrix(ConditionalDistribution):
     def _compute_dtype(self, alpha_dtype):
         return alpha_dtype
 
-    def _default_variational_model(self, **kwargs):
-        return SimplexTransformedGaussian(shape=(self.K,), name="q_"+self.name, model=None)
+    def default_q(self, **kwargs):
+        q1 = Gaussian(shape=self.shape)
+        return TransformedDistribution(q1, Simplex, name="q_"+self.name)
+        #return SimplexTransformedGaussian(shape=(self.K,), name="
     
     def reparameterized(self):
         return False
@@ -154,8 +154,8 @@ class BernoulliMatrix(ConditionalDistribution):
     def _compute_dtype(self, p_dtype):
         return np.int32
 
-    def _default_variational_model(self, **kwargs):
-        return BernoulliMatrix(shape=self.shape, model=None)
+    def default_q(self, **kwargs):
+        return BernoulliMatrix(shape=self.shape)
     
     def reparameterized(self):
         return False
@@ -212,7 +212,7 @@ class SimplexTransformedGaussian(ConditionalDistribution):
         assert(shape is not None and len(shape)==1)
         n = shape[0]
 
-        self.gaussian = Gaussian(mean=mean, std=std, shape=(n-1,), model=None)
+        self.gaussian = Gaussian(mean=mean, std=std, shape=(n-1,))
         super(SimplexTransformedGaussian, self).__init__(shape=shape, mean=mean,
                                                          std=std, **kwargs)
 
@@ -277,8 +277,8 @@ class Gaussian(ConditionalDistribution):
         variance = std**2
         return tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
 
-    def _default_variational_model(self, **kwargs):
-        return Gaussian(shape=self.shape, name="q_"+self.name, model=None)
+    def default_q(self, **kwargs):
+        return Gaussian(shape=self.shape, name="q_"+self.name)
 
     def _expected_logp(self, q_result, q_mean=None, q_std=None):
 
@@ -287,19 +287,19 @@ class Gaussian(ConditionalDistribution):
             
         std_sample = get_sample(q_std, 'std')
         mean_sample = get_sample(q_mean, 'mean')
-        out_sample = q_result._sampled
+        result_sample = q_result._sampled
         
         if isinstance(q_result, Gaussian) and not isinstance(q_mean, Gaussian):
             cross = bf.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, mean_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         elif not isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
-            cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance, out_sample, tf.square(std_sample))
+            cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance, result_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         elif isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
             cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance + q_result.variance, q_result.mean, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         else:
-            elp = self._logp(out=out_sample, mean=mean_sample, std=std_sample)
+            elp = self._logp(result=result_sample, mean=mean_sample, std=std_sample)
         return elp
             
     def _compute_shape(self, mean_shape, std_shape):

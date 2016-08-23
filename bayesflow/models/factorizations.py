@@ -83,7 +83,6 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
         return expected_lp
 
-
     """
     def elbo_term(self, symmetry_correction_hack=True):
         expected_logp, entropy = super(NoisyGaussianMatrixProduct, self).elbo_term()
@@ -169,18 +168,8 @@ class GMMClustering(ConditionalDistribution):
         N, D = self.shape
         K = self.n_clusters
 
-        """
-        center_idxs = tf.placeholder(shape=(N,), dtype=tf.int)
-        def random_noise():
-            return np.asarray(np.random.randn(*self.shape), dtype=np.float32)
-        def random_idxs():
-            return np.random.choice(np.arange(K), size=(N,),  p=weights)
-        
-        return chosen_centers + eps*std, {eps: random_source, center_idxs: random_idxs}
-        """
-        
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
-        center_idxs = tf.multinomial(tf.log(tf.expand_dims(weights, 0)), num_samples=N)
+        center_idxs = tf.squeeze(tf.multinomial(tf.log(tf.expand_dims(weights, 0)), num_samples=N), squeeze_dims=(0,))
         
         chosen_centers = tf.gather(centers, center_idxs)
         return chosen_centers + eps*std
@@ -275,7 +264,7 @@ class NoisyLatentFeatures(ConditionalDistribution):
     def _entropy(self, **kwargs):
         # not yet implemented
         return tf.constant(np.nan)
-    
+
     """
     def elbo_term(self, symmetry_correction_hack=True):
         expected_logp, entropy = super(NoisyLatentFeatures, self).elbo_term()

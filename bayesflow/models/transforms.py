@@ -5,7 +5,6 @@ import bayesflow as bf
 import bayesflow.util as util
 
 from bayesflow.models import ConditionalDistribution
-from bayesflow.models.q_distributions import QDistribution
 
 class DeterministicTransform(ConditionalDistribution):
     """
@@ -18,6 +17,7 @@ class DeterministicTransform(ConditionalDistribution):
     
     def __init__(self, A, transform, **kwargs):
         self.transform=transform
+        assert(isinstance(A, ConditionalDistribution))
         super(DeterministicTransform, self).__init__(A=A, **kwargs)
 
     def inputs(self):
@@ -42,9 +42,9 @@ class DeterministicTransform(ConditionalDistribution):
     def marginalize(self, qdist):
         raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
 
-    def _default_variational_model(self, **kwargs):
-        assert("q_A" in kwargs)
-        return DeterministicTransform(kwargs["q_A"], self.transform)
+    def default_q(self):
+        q_A = self.inputs_random["A"].q_distribution()    
+        return DeterministicTransform(q_A, self.transform)
 
 class TransformedDistribution(ConditionalDistribution):
 
@@ -54,11 +54,9 @@ class TransformedDistribution(ConditionalDistribution):
     a RV already present in the model, this creates a new random variable
     having the density of the transformed distribution. 
 
-    For example, let 
-
     """
     
-    def __init__(self, dist, transform, model="auto", **kwargs):
+    def __init__(self, dist, transform, **kwargs):
 
         # we assume dist is an *instance* of a ConditionalDist class that is
         # not currently part of any model, but will have some set of
@@ -68,13 +66,12 @@ class TransformedDistribution(ConditionalDistribution):
         # and instantiate the class ourselves with arguments passed into
         # the TransformedDistribution
         if isinstance(dist, type):
-            self.dist = dist(model=None, **kwargs)
+            self.dist = dist(**kwargs)
         else:
-            assert(dist.model is None)
             self.dist = dist
 
         self.transform=transform
-        super(TransformedDistribution, self).__init__(model=model, **kwargs)
+        super(TransformedDistribution, self).__init__(**kwargs)
 
         del self._sampled
         self._sampled, self._sampled_log_jacobian = self.transform.transform(self.dist._sampled, return_log_jac=True)
@@ -368,4 +365,13 @@ Log = invert_transform(Exp)
 Reciprocal_Sqrt = chain_transforms(Reciprocal, Sqrt)
 Reciprocal_Square = chain_transforms(Reciprocal, Square)
 Exp_Reciprocal = chain_transforms(Exp, Reciprocal)
+
 Simplex_Raw = chain_transforms(Exp, Normalize)
+class Simplex(Transform):
+    # result is invariant to shifting the (logspace) input,
+    # so we choose a shift to avoid overflow
+
+    @classmethod
+    def transform(cls, x, **kwargs):
+        xmax = tf.reduce_max(x)
+        return Simplex_Raw.transform(x-xmax, **kwargs)
