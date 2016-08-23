@@ -151,3 +151,109 @@ class LinearGaussian(ConditionalDistribution):
 
         return logp
 
+
+class LinearGaussianChainCRF(ConditionalDistribution):
+
+    # TODO this has not been updated from the old-style QDistribution
+    # so is currently totally broken
+    
+    def __init__(self, shape,
+                 transition_matrices,
+                 step_noise,
+                 unary_factors=None):
+
+        super(LinearGaussianChainCRF, self).__init__(shape=shape)
+        T, d = shape
+
+        self.T = T
+        self._transition_matrices = transition_matrices
+        self._step_noise = step_noise
+
+        
+        if unary_factors is not None:
+            self._unary_factors = unary_factors
+        else:
+            unary_factors = []
+            for t in range(T):                
+                init_prec_mean = np.float32(np.random.randn((d,)) * 10)
+                unary_factor_prec_mean = tf.Variable(init_prec_mean, name="unary_factor_prec_mean_%d" % t)
+                unary_factor_prec = posdef_variable(d, init_log_diag=10)
+                unary_factor = MVGaussianNatural(unary_factor_prec_mean, unary_factor_prec)
+                unary_factors.append(unary_factor)
+            self._unary_factors = unary_factors
+            
+        self.stochastic_eps = tf.placeholder(dtype=np.float32, shape=self.output_shape, name="eps")
+
+        self._back_filtered, self._logZ = self._pass_messages_backwards()
+        self.sample, self._entropy = self._sample_forward(self._back_filtered, self.stochastic_eps)
+
+    def entropy(self):
+        return self._entropy
+        
+    def sample_stochastic_inputs(self):
+        sampled_eps = np.random.randn(*self.output_shape)
+        return {self.stochastic_eps : sampled_eps}
+        
+    def _transition_mat(self, t):
+        try:
+            return tf.convert_to_tensor(self._transition_matrices[t])
+        except:
+            return tf.convert_to_tensor(self._transition_matrices)
+        
+    def _gaussian_noise(self, t):
+        try:
+            return self._step_noise[t]
+        except:
+            return self._step_noise
+
+    def _pass_messages_backwards(self):
+        messages = []
+        back_filtered = self._unary_factors[self.T-1]
+        messages.append(back_filtered)
+        logZ = 0.0
+        for t in np.arange(self.T-1)[::-1]:
+            back_filtered_pred = reverse_message(back_filtered,
+                                                 self._transition_mat(t),
+                                                 self._gaussian_noise(t))
+
+            unary_factor = self._unary_factors[t]
+            logZ += back_filtered_pred.multiply_density_logZ(unary_factor)
+            back_filtered = back_filtered_pred.multiply_density(unary_factor)
+
+            messages.append(back_filtered)
+
+        messages = messages[::-1]
+        return messages, logZ
+
+    def _sample_forward(self, back_filtered, eps):
+        samples = []
+
+        epses = tf.unpack(eps)
+
+        sampling_dist = back_filtered[0]
+        z_i = sampling_dist.sample(epses[0])
+        samples.append(z_i)
+
+        sampling_dists = [sampling_dist]        
+        entropies = [sampling_dist.entropy()]
+        for t in np.arange(1, self.T):
+            pred_mean = tf.matmul(self._transition_mat(t-1), z_i)
+            noise = self._gaussian_noise(t-1)
+
+            #new_prec_mean = noise.prec_mean() + tf.matmul(noise.prec(), pred_mean)
+            #incoming = MVGaussianNatural(new_prec_mean, noise.prec())
+            incoming = MVGaussianMeanCov(noise.mean() + pred_mean, noise.cov())
+            
+            sampling_dist = back_filtered[t].multiply_density(incoming)
+            sampling_dists.append(sampling_dist)
+            
+            z_i = sampling_dist.sample(epses[t])
+            entropies.append(sampling_dist.entropy())            
+            samples.append(z_i)
+
+        self.sampling_dists = sampling_dists
+        self.entropies = entropies
+
+        entropy = tf.reduce_sum(tf.pack(entropies))
+        sample = tf.reshape(tf.squeeze(tf.pack(samples)), self.output_shape)
+        return sample, entropy

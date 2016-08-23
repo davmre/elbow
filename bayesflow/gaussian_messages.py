@@ -180,7 +180,7 @@ class MVGaussianNatural(AbstractMVGaussian):
                                                                   L_prec=self._L_prec)
 
 
-    
+
 def reverse_message(gaussian_tplus1, transition_mat,
                     gaussian_noise):
     """

@@ -3,7 +3,7 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-from bayesflow.models import ConditionalDistribution
+from bayesflow.conditional_dist import ConditionalDistribution
 from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
@@ -44,7 +44,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
 
     def _logp(self, result, A, B, std):
         prod = tf.matmul(A, tf.transpose(B))
-        lp = tf.reduce_sum(bf.dists.gaussian_log_density(result, mean=prod, stddev=std))
+        lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
         return lp
 
     def _expected_logp(self, q_result, q_A, q_B, q_std=None):
@@ -60,7 +60,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         if self.rescale:
             expected_result = expected_result / self.K
         
-        gaussian_lp = tf.reduce_sum(bf.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
+        gaussian_lp = tf.reduce_sum(util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
 
         # can do a more efficient calculation if we assume a uniform (scalar) noise variance across all entries
         #aat_diag = tf.reduce_sum(tf.square(mA), 0)
@@ -127,7 +127,7 @@ class NoisyCumulativeSum(ConditionalDistribution):
         #r = np.float32(np.arange(N, 0, -1)).reshape((1, -1))
 
         expected_X = tf.cumsum(q_A.mean)
-        gaussian_lp = bf.dists.gaussian_log_density(X, expected_X, variance=var)
+        gaussian_lp = util.dists.gaussian_log_density(X, expected_X, variance=var)
 
         # performs a reverse cumulative sum
         #R = tf.matmul(cumsum_mat, 1.0/var, transpose_a=True)
@@ -145,7 +145,7 @@ class NoisyCumulativeSum(ConditionalDistribution):
 
         expected_X = tf.cumsum(A)
         var = tf.square(std)
-        gaussian_lp = bf.dists.gaussian_log_density(result, expected_X, variance=var)
+        gaussian_lp = util.dists.gaussian_log_density(result, expected_X, variance=var)
         return tf.reduce_sum(gaussian_lp)
 
 class GMMClustering(ConditionalDistribution):
@@ -180,7 +180,7 @@ class GMMClustering(ConditionalDistribution):
         # loop over clusters
         for i, center in enumerate(tf.unpack(centers)):
             # compute vector of likelihoods that each point could be generated from *this* cluster
-            cluster_lls = tf.reduce_sum(bf.dists.gaussian_log_density(result, center, std), 1)
+            cluster_lls = tf.reduce_sum(util.dists.gaussian_log_density(result, center, std), 1)
 
             # sum these likelihoods, weighted by cluster probabilities
             cluster_logps = tf.log(weights[i]) + cluster_lls
@@ -248,7 +248,7 @@ class NoisyLatentFeatures(ConditionalDistribution):
         
         expected_X = tf.matmul(bernoulli_params, q_G.mean)
         precisions = 1.0/var
-        gaussian_lp = bf.dists.gaussian_log_density(X_means, expected_X, variance=var)
+        gaussian_lp = util.dists.gaussian_log_density(X_means, expected_X, variance=var)
 
         mu2 = tf.square(q_G.mean)
         tau_V = tf.matmul(bernoulli_params, q_G.variance)
@@ -298,6 +298,6 @@ class MultiplicativeGaussianNoise(ConditionalDistribution):
 
     def _logp(self, result, A, std):
         residuals = result / A
-        lp = tf.reduce_sum(bf.dists.gaussian_log_density(residuals, 0.0, std))
+        lp = tf.reduce_sum(util.dists.gaussian_log_density(residuals, 0.0, std))
         return lp
 

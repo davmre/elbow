@@ -4,8 +4,8 @@ import tensorflow as tf
 import uuid
 import copy
 
-from bayesflow.models.transforms import DeterministicTransform
-from bayesflow.models import ConditionalDistribution, WrapperNode
+from conditional_dist import ConditionalDistribution, WrapperNode
+from transforms import DeterministicTransform
 
 def ancestors(node):
     return set([node,] + [ancestor_node for inp in node.inputs_random.values() for ancestor_node in ancestors(inp)])

@@ -1,7 +1,7 @@
-import dists
-import special_hacks
-import transforms
-import mean_field
-import mh
-import util
+from conditional_dist import ConditionalDistribution, WrapperNode
+from joint_model import Model
+
+#import transforms
+#import models
+#import util
 

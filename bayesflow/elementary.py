@@ -1,13 +1,11 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
-import bayesflow.util as util
+import util
 
-from bayesflow.models import ConditionalDistribution
-from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
-from bayesflow.transforms import normalize
-from bayesflow.models.transforms import Logit, Simplex, TransformedDistribution
+from conditional_dist import ConditionalDistribution
+from parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
+from transforms import Logit, Simplex, TransformedDistribution, Normalize
 
 import scipy.stats
 
@@ -24,11 +22,11 @@ class GammaMatrix(ConditionalDistribution):
         return np.asarray(scipy.stats.gamma(a=alpha, scale=scale).rvs(*self.output_shape), dtype=self.dtype)
 
     def _logp(self, result, alpha, beta):    
-        lp = tf.reduce_sum(bf.dists.gamma_log_density(result, alpha, beta))
+        lp = tf.reduce_sum(util.dists.gamma_log_density(result, alpha, beta))
         return lp
 
     def _compute_shape(self, alpha_shape, beta_shape):
-        return bf.util.broadcast_shape(alpha_shape, beta_shape)
+        return util.broadcast_shape(alpha_shape, beta_shape)
         
     def _compute_dtype(self, alpha_dtype, beta_dtype):
         assert(alpha_dtype==beta_dtype)
@@ -57,11 +55,11 @@ class BetaMatrix(ConditionalDistribution):
         return Z
 
     def _logp(self, result, alpha, beta):    
-        lp = tf.reduce_sum(bf.dists.beta_log_density(result, alpha, beta))
+        lp = tf.reduce_sum(util.dists.beta_log_density(result, alpha, beta))
         return lp
 
     def _compute_shape(self, alpha_shape, beta_shape):
-        return bf.util.broadcast_shape(alpha_shape, beta_shape)
+        return util.broadcast_shape(alpha_shape, beta_shape)
         
     def _compute_dtype(self, alpha_dtype, beta_dtype):
         assert(alpha_dtype==beta_dtype)
@@ -94,11 +92,11 @@ class DirichletMatrix(ConditionalDistribution):
         alpha = alpha * tf.ones(shape=(self.shape[0]), dtype=self.dtype)
 
         gammas = tf.squeeze(tf.random_gamma(shape=(1,), alpha=alpha, beta=1))
-        sample, log_jacobian = normalize(gammas)
+        sample = Normalize.transform(gammas)
         return sample
 
     def _logp(self, result, alpha):    
-        lp = tf.reduce_sum(bf.dists.dirichlet_log_density(result, alpha))
+        lp = tf.reduce_sum(util.dists.dirichlet_log_density(result, alpha))
         return lp
 
     def _compute_shape(self, alpha_shape):        
@@ -142,11 +140,11 @@ class BernoulliMatrix(ConditionalDistribution):
         p_z = q_p._sampled
         q_z = q_result.probs
         
-        lp = -tf.reduce_sum(bf.dists.bernoulli_entropy(q_z, cross_q = p_z))
+        lp = -tf.reduce_sum(util.dists.bernoulli_entropy(q_z, cross_q = p_z))
         return lp
 
     def _entropy(self, p):
-        return tf.reduce_sum(bf.dists.bernoulli_entropy(p))
+        return tf.reduce_sum(util.dists.bernoulli_entropy(p))
     
     def _compute_shape(self, p_shape):
         return p_shape
@@ -190,7 +188,7 @@ class MultinomialMatrix(ConditionalDistribution):
         p = q_p._sampled
         q = q_result.probs
 
-        lp = tf.reduce_sum(bf.dists.multinomial_entropy(q, cross_q=p))
+        lp = tf.reduce_sum(util.dists.multinomial_entropy(q, cross_q=p))
         return lp
     
     def _compute_shape(self, p_shape):
@@ -270,12 +268,12 @@ class Gaussian(ConditionalDistribution):
         return eps * std + mean
     
     def _logp(self, result, mean, std):
-        lp = tf.reduce_sum(bf.dists.gaussian_log_density(result, mean=mean, stddev=std))
+        lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=mean, stddev=std))
         return lp
 
     def _entropy(self, std, **kwargs):
         variance = std**2
-        return tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
+        return tf.reduce_sum(util.dists.gaussian_entropy(variance=variance))
 
     def default_q(self, **kwargs):
         return Gaussian(shape=self.shape, name="q_"+self.name)
@@ -290,20 +288,20 @@ class Gaussian(ConditionalDistribution):
         result_sample = q_result._sampled
         
         if isinstance(q_result, Gaussian) and not isinstance(q_mean, Gaussian):
-            cross = bf.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, mean_sample, tf.square(std_sample))
+            cross = util.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, mean_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         elif not isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
-            cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance, result_sample, tf.square(std_sample))
+            cross = util.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance, result_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         elif isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
-            cross = bf.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance + q_result.variance, q_result.mean, tf.square(std_sample))
+            cross = util.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance + q_result.variance, q_result.mean, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         else:
             elp = self._logp(result=result_sample, mean=mean_sample, std=std_sample)
         return elp
             
     def _compute_shape(self, mean_shape, std_shape):
-        return bf.util.broadcast_shape(mean_shape, std_shape)
+        return util.broadcast_shape(mean_shape, std_shape)
 
     def _input_shape(self, param):
         assert (param in self.inputs().keys())

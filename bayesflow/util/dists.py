@@ -1,8 +1,8 @@
 import numpy as np
 import tensorflow as tf
 
-from bayesflow.special_hacks import gammaln, betaln
-from bayesflow.util import extract_shape
+from special_hacks import gammaln, betaln
+from bayesflow.util.misc import extract_shape
 import scipy.special
 
 

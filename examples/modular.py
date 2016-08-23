@@ -2,15 +2,12 @@ import numpy as np
 import tensorflow as tf
 
 import bayesflow as bf
-import bayesflow.util as util
 
-from bayesflow.models.joint_model import Model
-from bayesflow.models.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
-from bayesflow.models.factorizations import *
-from bayesflow.models.transforms import DeterministicTransform, Exp
+from bayesflow.joint_model import Model
+from bayesflow.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
+from bayesflow.transforms import DeterministicTransform, Exp
 from bayesflow.models.neural import NeuralGaussian, NeuralBernoulli
-from bayesflow.models.train import optimize_elbo, print_inference_summary
-
+from bayesflow.models.factorizations import *
 """
 Examples / test cases for a new API allowing construction of
 models and inference routines from modular components.

@@ -4,9 +4,7 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
-
-from bayesflow.models import ConditionalDistribution
-from bayesflow.models.q_distributions import QDistribution
+from bayesflow.conditional_dist import ConditionalDistribution
 
 def layer(inp, w, b):
     if len(inp.get_shape()) == 2:
@@ -69,7 +67,7 @@ class NeuralGaussian(ConditionalDistribution):
         mean, variance = self._build_network(**input_samples)
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)        
         self._sampled = mean + eps * tf.sqrt(variance)
-        self._sampled_entropy = tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
+        self._sampled_entropy = tf.reduce_sum(util.dists.gaussian_entropy(variance=variance))
         
     def _sample(self, **kwargs):
         mean, variance = self._build_network(**kwargs)
@@ -78,7 +76,7 @@ class NeuralGaussian(ConditionalDistribution):
     
     def _entropy(self, **kwargs):
         mean, variance = self._build_network(**kwargs)
-        return tf.reduce_sum(bf.dists.gaussian_entropy(variance=variance))
+        return tf.reduce_sum(util.dists.gaussian_entropy(variance=variance))
 
 class NeuralBernoulli(ConditionalDistribution):
     def __init__(self, z, d_hidden, d_x, w1=None, w2=None, b1=None, b2=None, **kwargs):
@@ -125,7 +123,7 @@ class NeuralBernoulli(ConditionalDistribution):
         probs = self._build_network(**input_samples)
         unif = tf.random_uniform(shape=self.shape)        
         self._sampled = unif < probs
-        self._sampled_entropy = tf.reduce_sum(bf.dists.bernoulli_entropy(p=probs))
+        self._sampled_entropy = tf.reduce_sum(util.dists.bernoulli_entropy(p=probs))
     
     def _sample(self, return_probs=False, **kwargs):
         probs = self._build_network(**kwargs)
@@ -137,9 +135,9 @@ class NeuralBernoulli(ConditionalDistribution):
     
     def _logp(self, result, **kwargs):
         probs = self._build_network(**kwargs)
-        obs_lp = tf.reduce_sum(bf.dists.bernoulli_log_density(result, probs))
+        obs_lp = tf.reduce_sum(util.dists.bernoulli_log_density(result, probs))
         return obs_lp
 
     def _entropy(self, **kwargs):
         probs = self._build_network(**kwargs)
-        return tf.reduce_sum(bf.dists.bernoulli_entropy(p=probs))
+        return tf.reduce_sum(util.dists.bernoulli_entropy(p=probs))
