@@ -85,9 +85,9 @@ class ConditionalDistribution(object):
         self._sampled_entropy = self._parameterized_entropy(**input_samples)
 
     def sample(self, seed=0):
-        tf.set_random_seed(seed)
-        
         init = tf.initialize_all_variables()
+        tf.set_random_seed(seed)
+
         sess = tf.Session()
         sess.run(init)
         return sess.run(self._sampled)

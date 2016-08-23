@@ -23,6 +23,8 @@ class Model(object):
         # the model includes all ancestors of the passed-in nodes. 
         self.component_nodes = ancestor_closure(nodes)
 
+    def construct_elbo(self):
+
         # the variational model includes all ancestors of qdists associated
         # with model nodes.
         # WARNING this is only correct if we stop at the first stochastic
@@ -31,8 +33,7 @@ class Model(object):
         # which is not yet implemented. 
         explicit_qnodes = [node.q_distribution() for node in self.component_nodes]
         self.variational_nodes = ancestor_closure(explicit_qnodes)
-                
-    def construct_elbo(self):
+        
         elps = [n.expected_logp() for n in self.component_nodes]
         entropies = [n.entropy() for n in self.variational_nodes]
         
@@ -54,6 +55,21 @@ class Model(object):
             if len(d) > 0:
                 posterior_vals[node.name] = d
         return posterior_vals
+
+    def sample(self, seed=0):
+        tf.set_random_seed(seed)
+        
+        init = tf.initialize_all_variables()
+
+        sess = tf.Session()
+        sess.run(init)
+        samples = {}
+
+        sampled = sess.run([node._sampled for node in self.component_nodes])
+        
+        for node, sval in zip(self.component_nodes, sampled):
+            samples[node] = sval
+        return samples
         
     def train(self, steps=200, adam_rate=0.1, debug=False, return_session=False):
         elbo = self.construct_elbo()

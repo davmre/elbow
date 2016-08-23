@@ -34,7 +34,7 @@ class GammaMatrix(ConditionalDistribution):
 
     def default_q(self, **kwargs):
         q1 = Gaussian(shape=self.shape)
-        return TransformedDistribution(q1, Exp)
+        return TransformedDistribution(q1, Exp, name="q_"+self.name)
 
     def reparameterized(self):
         return False
@@ -66,7 +66,7 @@ class BetaMatrix(ConditionalDistribution):
 
     def default_q(self, **kwargs):
         q1 = Gaussian(shape=self.shape)
-        return TransformedDistribution(q1, Logit)
+        return TransformedDistribution(q1, Logit, name="q_"+self.name)
 
     def reparameterized(self):
         return False
@@ -152,7 +152,7 @@ class BernoulliMatrix(ConditionalDistribution):
         return np.int32
 
     def default_q(self, **kwargs):
-        return BernoulliMatrix(shape=self.shape)
+        return BernoulliMatrix(shape=self.shape, name="q_"+self.name)
     
     def reparameterized(self):
         return False
