@@ -5,7 +5,7 @@ import copy
 import bayesflow as bf
 import bayesflow.util as util
 
-from bayesflow.models.train import construct_elbo, optimize_elbo, print_inference_summary, monte_carlo_elbo
+from bayesflow.joint_model import Model
 
 from grammar import list_successors
 from models import build_model

@@ -5,7 +5,7 @@ import util
 
 from conditional_dist import ConditionalDistribution
 from parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
-from transforms import Logit, Simplex, TransformedDistribution, Normalize
+from transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
 
 import scipy.stats
 
@@ -18,8 +18,8 @@ class GammaMatrix(ConditionalDistribution):
         return {"alpha": positive_exp, "beta": positive_exp}
     
     def _sample(self, alpha, beta):
-        scale = 1.0/beta
-        return np.asarray(scipy.stats.gamma(a=alpha, scale=scale).rvs(*self.output_shape), dtype=self.dtype)
+        gammas = tf.random_gamma(shape=self.shape, alpha=alpha, beta=beta)
+        return gammas
 
     def _logp(self, result, alpha, beta):    
         lp = tf.reduce_sum(util.dists.gamma_log_density(result, alpha, beta))
@@ -33,9 +33,8 @@ class GammaMatrix(ConditionalDistribution):
         return alpha_dtype
 
     def default_q(self, **kwargs):
-        raise NotImplementedError
-        #q1 = Gaussian(shape=self.shape, model=None)
-        #return PointwiseTransformedMatrix(q1, bf.transforms.exp, model=None)
+        q1 = Gaussian(shape=self.shape)
+        return TransformedDistribution(q1, Exp)
 
     def reparameterized(self):
         return False

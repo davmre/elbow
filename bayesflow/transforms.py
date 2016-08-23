@@ -39,9 +39,13 @@ class DeterministicTransform(ConditionalDistribution):
     def _entropy(self, A):
         return tf.constant(0.0, dtype=tf.float32)
         
-    def marginalize(self, qdist):
+    def attach_q(self, qdist):
         raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
 
+    def observe(self, observed_val):
+        transformed = self.transform.inverse(observed_val)
+        self.inputs_random["A"].observe(transformed)
+    
     def default_q(self):
         q_A = self.inputs_random["A"].q_distribution()    
         return DeterministicTransform(q_A, self.transform)
