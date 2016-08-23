@@ -130,7 +130,7 @@ class NeuralBernoulli(ConditionalDistribution):
         if return_probs:
             return probs
         else:
-            unif = tf.random.uniform(shape=probs.shape)
+            unif = tf.random_uniform(shape=probs.shape)
             return unif < probs
     
     def _logp(self, result, **kwargs):
