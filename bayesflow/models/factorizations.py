@@ -8,7 +8,7 @@ from bayesflow.parameterization import unconstrained, positive_exp, simplex_cons
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std, rescale=True, **kwargs):
+    def __init__(self, A, B, std=None, rescale=True, **kwargs):
 
         # optionally compute (AB' / K) instead of AB',
         # so that the marginal variance of the result equals
@@ -44,18 +44,25 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
 
     def _logp(self, result, A, B, std):
         prod = tf.matmul(A, tf.transpose(B))
+        if self.rescale:
+            prod = prod / self.K
         lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
         return lp
 
-    def _expected_logp(self, q_result, q_A, q_B, q_std=None):
+    def _expected_logp(self, q_result, q_A=None, q_B=None, q_std=None):
 
         std = q_std._sampled if q_std is not None else self.inputs_nonrandom['std']
         
-        var = q_result.variance + tf.square(std)
+        try:
+            var = q_result.variance + tf.square(std)
+            mA, vA = q_A.mean, q_A.variance
+            mB, vB = q_B.mean, q_B.variance
+        except:
+            # if any Q dists are missing or nongaussian
+            A = q_A._sampled if q_A is not None else self.inputs_nonrandom['A']
+            B = q_B._sampled if q_B is not None else self.inputs_nonrandom['B']
+            return self._logp(result=q_result._sampled, A=A, B=B, std=std)
             
-        mA, vA = q_A.mean, q_A.variance
-        mB, vB = q_B.mean, q_B.variance
-
         expected_result = tf.matmul(mA, tf.transpose(mB))
         if self.rescale:
             expected_result = expected_result / self.K
