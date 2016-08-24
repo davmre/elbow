@@ -32,7 +32,7 @@ class Model(object):
         # variables in the variational model we need the HVM objective
         # which is not yet implemented. 
         explicit_qnodes = [node.q_distribution() for node in self.component_nodes]
-        self.variational_nodes = ancestor_closure(explicit_qnodes)
+        self.variational_nodes = [node for node in ancestor_closure(explicit_qnodes) if node not in self.component_nodes]
         
         elps = [n.expected_logp() for n in self.component_nodes]
         entropies = [n.entropy() for n in self.variational_nodes]
@@ -41,6 +41,27 @@ class Model(object):
         entropy = tf.reduce_sum(tf.pack(entropies))
         elbo = elp+entropy
         return elbo
+
+    def elbo_terms(self):
+        elps = {n.name: n.expected_logp() for n in self.component_nodes}
+        entropies = {n.name: n.entropy() for n in self.variational_nodes}
+        return elps, entropies
+
+    def evaluate_elbo_terms(self, sess):
+        elps, entropies = self.elbo_terms()
+
+        sorted_elps = sorted(elps.items())
+        sorted_entropies = sorted(entropies.items())
+        elp_names, elp_terms = zip(*sorted(elps.items()))
+        entropy_names, entropy_terms = zip(*sorted(entropies.items()))
+        all_terms = elp_terms + entropy_terms
+        vals = sess.run(all_terms)
+
+        n_elp = len(elp_terms)
+        elp_vals = dict(zip(elp_names, vals[:n_elp]))
+        entropy_vals = dict(zip(entropy_names, vals[n_elp:]))
+
+        return elp_vals, entropy_vals
         
     def posterior(self, session, feed_dict=None):
         posterior_vals = {}
@@ -71,7 +92,7 @@ class Model(object):
             samples[node] = sval
         return samples
         
-    def train(self, steps=200, adam_rate=0.1, debug=False, return_session=False):
+    def train(self, steps=200, adam_rate=0.1, debug=False, session=None):
         elbo = self.construct_elbo()
 
         try:
@@ -85,18 +106,18 @@ class Model(object):
         if debug:
             debug_ops = tf.add_check_numerics_ops()
 
-        sess = tf.Session()
-        sess.run(init)
+        session = tf.Session() if session is None else session
+        session.run(init)
         for i in range(steps):
             if debug:
-                sess.run(debug_ops)
+                session.run(debug_ops)
 
-            sess.run(train_step)
+            session.run(train_step)
 
-            elbo_val = sess.run((elbo))
+            elbo_val = session.run((elbo))
             print i, elbo_val
 
-        posterior = self.posterior(session=sess)
-            
+        posterior = self.posterior(session)
         return posterior
+
     
