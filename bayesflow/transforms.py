@@ -48,7 +48,7 @@ class DeterministicTransform(ConditionalDistribution):
     
     def default_q(self):
         q_A = self.inputs_random["A"].q_distribution()    
-        return DeterministicTransform(q_A, self.transform)
+        return DeterministicTransform(q_A, self.transform, name="q_"+self.name)
 
 class TransformedDistribution(ConditionalDistribution):
 
@@ -108,11 +108,9 @@ class TransformedDistribution(ConditionalDistribution):
     def _entropy(self, *args, **kwargs):
         return self.dist._entropy(*args, **kwargs) + self._sampled_log_jacobian
 
-    def _default_variational_model(self, **kwargs):
-        dvm = self.dist._default_variational_model()
-        return TransformedDistribution(dvm, self.transform)
-
-
+    def default_q(self, **kwargs):
+        dvm = self.dist.default_q()
+        return TransformedDistribution(dvm, self.transform, name="q_"+self.name)
 
 #############################################################################
     
@@ -299,6 +297,8 @@ class Transpose(SelfInverseTransform):
         return (M, N)
 
 
+    
+    
 def invert_transform(source):
     """
     Given a Transform class, return a class 
