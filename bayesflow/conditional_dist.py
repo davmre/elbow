@@ -27,26 +27,33 @@ class ConditionalDistribution(object):
         self._q_distribution = None
         self.minibatch_scale_factor = minibatch_scale_factor
 
-        self.shape = shape            
+        self.shape = shape
+        
         # store map of input local names to the canonical names, that
         # is, (node, name) pairs -- modeling those params.
         self.inputs_random = {}
         self.inputs_nonrandom = {}
-        self._setup_inputs(**kwargs)
-        
+        self.input_shapes = self._setup_inputs(result_shape=shape, **kwargs)
+    
         # if not already specified, compute the shape of the output at
         # this node as a function of its inputs
         if shape is None:
-            input_shapes = {name + "_shape": node.shape for (name, node) in self.inputs_random.items()}
-            input_shapes.update({name + "_shape": concrete_shape(tnode.get_shape()) for (name, tnode) in self.inputs_nonrandom.items()})
+            input_shapes = {input_name+"_shape": shape for (input_name, shape) in self.input_shapes.items()}
             self.shape = self._compute_shape(**input_shapes)
-
+            
         # TODO do something sane here...
         self.dtype = tf.float32
 
-        self._setup_canonical_sample()
+        input_samples = {}
+        for param, node in self.inputs_random.items():
+            input_samples[param] = node._sampled
+        input_samples.update(self.inputs_nonrandom)
+        self._sampled, self._sampled_entropy = self._sample_and_entropy(**input_samples)
 
-    def _setup_inputs(self, **kwargs):
+        self.__dict__.update(input_samples)
+        self.__dict__.update(self.derived_parameters(**input_samples))
+        
+    def _setup_inputs(self, result_shape=None, **kwargs):
         """
         Called by the constructor to process inputs passed as random variables, 
         fixed values, or (if passed as None) parameters to be optimized over. 
@@ -55,35 +62,53 @@ class ConditionalDistribution(object):
           self.inputs_random
           self.inputs_nonrandom
         which map input names to ConditionalDist objects and Tensors, respectively. 
+        We also return a dictionary mapping inputs to their shapes. 
 
         This method can be overridden by classes that need to do some other
         form of crazy input processing. 
         """
+
+        input_shapes = {}
+        free_inputs = []
         
         for input_name, default_constructor in self.inputs().items():
             # inputs can be provided as constants, or nodes modeled by bayesflow distributions.
             if isinstance(kwargs[input_name], ConditionalDistribution):
-                self.inputs_random[input_name] = kwargs[input_name]
+                node = kwargs[input_name]
+                self.inputs_random[input_name] = node
+                input_shapes[input_name] = node.shape
             elif kwargs[input_name] is not None:
                 # if inputs are provided as TF or numpy values, just store that directly
-                tf_value = tf.convert_to_tensor(kwargs[input_name], dtype=tf.float32)
+                v = kwargs[input_name]
+                if isinstance(v, np.ndarray) and v.dtype in (np.int, np.int32, np.int64):
+                    tf_value = tf.convert_to_tensor(v, dtype=tf.int32)
+                else:
+                    tf_value = tf.convert_to_tensor(v, dtype=tf.float32)
                 self.inputs_nonrandom[input_name] = tf_value
+                input_shapes[input_name] = concrete_shape(tf_value.get_shape())
             elif kwargs[input_name] is None:
-                # free inputs will be optimized over
-                self.inputs_nonrandom[input_name] = default_constructor(shape=self._input_shape(input_name))
-        
-    def _setup_canonical_sample(self):
-        # define a canonical 'sample' for this variable
-        # in terms of canonical samples for the input variables.
-        # this is useful when defining variational posteriors,
-        # since passing a posterior automatically passes a
-        # sample that we can use in monte carlo objectives. 
-        input_samples = {}
-        for param, node in self.inputs_random.items():
-            input_samples[param] = node._sampled            
-        self._sampled = self._parameterized_sample(**input_samples)
-        self._sampled_entropy = self._parameterized_entropy(**input_samples)
+                free_inputs.append((input_name, default_constructor))
 
+        # free inputs will be optimized over
+        for free_input, constructor in free_inputs:
+            shape = self._input_shape(free_input, result=result_shape, **input_shapes)
+            input_shapes[free_input] = shape
+            self.inputs_nonrandom[free_input] = constructor(shape=shape)
+
+        return input_shapes
+            
+    def _sample_and_entropy(self, **kwargs):
+        """
+        Models with monte carlo entropy define the (stochastic) entropy in terms 
+        of the log probability of a sample, so for those models it's useful
+        to jointly generate a sample and a stochastic estimate of the entropy.
+        By default, however, we just call the methods separately. 
+        """
+        sample = self._sample(**kwargs)
+        self._sampled=sample
+        entropy = self._entropy(**kwargs)
+        return sample, entropy
+    
     def sample(self, seed=0):
         init = tf.initialize_all_variables()
         tf.set_random_seed(seed)
@@ -92,14 +117,6 @@ class ConditionalDistribution(object):
         sess.run(init)
         return sess.run(self._sampled)
         
-    def input_val(self, input_name):
-        # return a (Monte Carlo estimate of) the value for the given input.
-        # This allows distributions to easily return their parameters, for example.
-        if input_name in self.inputs_nonrandom:
-            return self.inputs_nonrandom[input_name]
-        else:
-            return self.inputs_random[input_name]._sampled
-
     def _parameterized_logp(self, *args, **kwargs):
         """
         Compute the log probability using the values of all fixed input
@@ -141,7 +158,10 @@ class ConditionalDistribution(object):
 
     def entropy(self):
         return self._sampled_entropy
-    
+
+    def derived_parameters(self, **input_vals):
+        return {}
+        
     def q_distribution(self):
         if self._q_distribution is None:
             default_q = self.default_q()
@@ -179,17 +199,25 @@ class WrapperNode(ConditionalDistribution):
     This implements the 'return' operation of the probability monad. 
     """
 
-    def __init__(self, tf_value, **kwargs):
-        self.tf_value = tf_value
-        self.mean = tf_value
+    def __init__(self, tf_value=None, shape=None, **kwargs):
+
+        if shape is None and tf_value is not None:
+            shape = concrete_shape(tf_value.get_shape())
+        super(WrapperNode, self).__init__(shape=shape, tf_value=tf_value, **kwargs)
+
+        self.mean = self.tf_value
         self.variance = tf.zeros_like(self.mean, name="variance")
         
-        shape = tf_value.get_shape()
-        super(WrapperNode, self).__init__(shape=shape, tf_value=tf_value, **kwargs)
-        
     def inputs(self):
-        return {"tf_value": None}
-        
+        from parameterization import unconstrained
+        return {"tf_value": unconstrained}
+
+    def _input_shape(self, param, result, **kwargs):
+        if param == "tf_value":
+            return result
+        else:
+            raise NotImplementedError
+    
     def _sample(self, tf_value):
         return tf_value
 

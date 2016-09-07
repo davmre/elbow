@@ -115,7 +115,7 @@ class MVGaussianMeanCov(AbstractMVGaussian):
         self._cov = cov
         
         self._L_cov = tf.cholesky(cov)
-        self._entropy = bf.dists.multivariate_gaussian_entropy(L=self._L_cov)
+        self._entropy = util.dists.multivariate_gaussian_entropy(L=self._L_cov)
 
         L_prec_transpose = util.triangular_inv(self._L_cov)
         self._L_prec = tf.transpose(L_prec_transpose)
@@ -125,7 +125,7 @@ class MVGaussianMeanCov(AbstractMVGaussian):
     def log_p(self, x):
         x_flat = tf.reshape(x, (-1,))
         mean_flat = tf.reshape(self._mean, (-1,))
-        return bf.dists.multivariate_gaussian_log_density(x_flat, mean_flat, L=self._L_cov)
+        return util.dists.multivariate_gaussian_log_density(x_flat, mean_flat, L=self._L_cov)
     
 class MVGaussianNatural(AbstractMVGaussian):
 
@@ -155,7 +155,7 @@ class MVGaussianNatural(AbstractMVGaussian):
         self._prec = prec
         
         self._L_prec = tf.cholesky(prec)
-        self._entropy = bf.dists.multivariate_gaussian_entropy(L_prec=self._L_prec)
+        self._entropy = util.dists.multivariate_gaussian_entropy(L_prec=self._L_prec)
 
         # want to solve prec * mean = prec_mean for mean.
         # this is equiv to (LL') * mean = prec_mean.
@@ -175,7 +175,7 @@ class MVGaussianNatural(AbstractMVGaussian):
         x_flat = tf.reshape(x, (-1,))
         mean_flat = tf.reshape(self._mean, (-1,))
 
-        return bf.dists.multivariate_gaussian_log_density_natural(x_flat, mu=mean_flat,
+        return util.dists.multivariate_gaussian_log_density_natural(x_flat, mu=mean_flat,
                                                                   prec=self._prec,
                                                                   L_prec=self._L_prec)
 

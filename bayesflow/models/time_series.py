@@ -3,14 +3,17 @@ import tensorflow as tf
 
 import bayesflow as bf
 import bayesflow.util as util
-
-from bayesflow.models import ConditionalDistribution
+from bayesflow import ConditionalDistribution
 
 import scipy.stats
 
+from bayesflow.gaussian_messages import MVGaussianMeanCov, reverse_message, forward_message
+
+from bayesflow.parameterization import unconstrained, psd_matrix, psd_diagonal
+
 class LinearGaussian(ConditionalDistribution):
     
-    def __init__(self, T, prior_mean, prior_cov,
+    def __init__(self, shape, K, prior_mean, prior_cov,
                  transition_mat, transition_mean, transition_cov,
                  observation_mat=None, observation_mean=None, observation_cov=None,
                  **kwargs):
@@ -21,24 +24,32 @@ class LinearGaussian(ConditionalDistribution):
         # We allow K=0 (implied by observation_mat=None) in which case the model is 
         # just a Markov chain -- this can be useful together or in conjunction with
         # non-Gaussian (e.g., neural/VAE) observation models.
+
+        self.T, self.D = shape
+        self.K = K
         
-        self.T = T
+        if observation_mean is None:
+            self._flag_no_obs = True
+            observation_mean = tf.zeros((self.D,), dtype=tf.float32)
+            observation_mat = tf.constant(np.float32(np.eye(self.D)))
+            observation_cov = tf.zeros((self.D, self.D), dtype=tf.float32)
+        
         super(LinearGaussian, self).__init__(prior_mean=prior_mean, prior_cov=prior_cov,
                                              transition_mat=transition_mat,
                                              transition_mean=transition_mean,
                                              transition_cov=transition_cov,
                                              observation_mat=observation_mat,
                                              observation_mean=observation_mean,
-                                             observation_cov=observation_cov,  **kwargs)
+                                             observation_cov=observation_cov,
+                                             shape=shape, **kwargs)
 
-        _, self.K = self.output_shape
-        self.D = self.input_nodes["prior_mean"].output_shape[0]
 
     def inputs(self):
-        return ("prior_mean", "prior_cov",
-                 "transition_mat", "transition_mean", "transition_cov",
-                 "observation_mat", "observation_mean", "observation_cov")
-        
+        return {"prior_mean": unconstrained, "prior_cov": psd_matrix,
+                 "transition_mat": unconstrained, "transition_mean": unconstrained, "transition_cov": psd_matrix,
+                 "observation_mat": unconstrained, "observation_mean": unconstrained, "observation_cov": psd_matrix}
+
+
     def _compute_shape(self, prior_mean_shape, prior_cov_shape,
                        transition_mat_shape, transition_mean_shape, transition_cov_shape,
                        observation_mat_shape=None, observation_mean_shape=None, observation_cov_shape=None):
@@ -59,47 +70,54 @@ class LinearGaussian(ConditionalDistribution):
             K1 = D1
 
         return (self.T, K1)
-    
-    def _compute_dtype(self, prior_mean_dtype, prior_cov_dtype,
-                       transition_mat_dtype, transition_mean_dtype, transition_cov_dtype,
-                       observation_mat_dtype=None, observation_mean_dtype=None, observation_cov_dtype=None):
 
-        assert(prior_mean_dtype == prior_cov_dtype == transition_mat_dtype == transition_mean_dtype == transition_cov_dtype)
-        if observation_mat_dtype is not None:
-            assert(prior_mean_dtype == observation_mat_dtype == observation_mean_dtype == observation_cov_dtype)
-        return prior_mean_dtype
-        
+    def _sample_and_entropy(self, **input_samples):
+        sampled = self._sample(**input_samples)
+        entropy = -self._logp(result=sampled, **input_samples)
+        return sampled, entropy
+    
     def _sample(self, prior_mean, prior_cov,
                  transition_mat, transition_mean, transition_cov,
                  observation_mat=None, observation_mean=None, observation_cov=None):
 
-        prior = scipy.stats.multivariate_normal(mean=prior_mean, cov=prior_cov)
-        state = prior.rvs(1)
+        transition_mean = tf.reshape(transition_mean, shape=(self.D, 1))
+        transition_eps = tf.random_normal(shape=(self.T, self.D))
+        transition_epses = [tf.reshape(n, shape=(self.D, 1)) for n in tf.unpack(transition_eps)]
 
-        transition_noise = scipy.stats.multivariate_normal(mean=transition_mean, cov=transition_cov)
-        if observation_mat is not None:
-            observation_noise = scipy.stats.multivariate_normal(mean=observation_mean, cov=observation_cov)
+        prior_mean = tf.reshape(prior_mean, shape=(self.D, 1))
+        prior_cov_L = tf.cholesky(prior_cov)
+        state = prior_mean + tf.matmul(prior_cov_L, transition_epses[0])
 
-        output = np.empty(self.output_shape, dtype=self.dtype)
-        hidden = np.empty((self.T, self.D), dtype=self.dtype)
+        transition_cov_L = tf.cholesky(transition_cov)
+        if not self._flag_no_obs:
+            observation_cov_L = tf.cholesky(observation_cov)
+            obs_eps = tf.random_normal(shape=(self.T, self.K))
+            obs_epses = [tf.reshape(n, shape=(self.K, 1)) for n in tf.unpack(obs_eps)]
+            observation_mean = tf.reshape(observation_mean, shape=(self.K, 1))
+            
+        output = []
+        hidden = []
         for t in range(self.T):
-            if observation_mat is not None:
-                pred_obs = np.dot(observation_mat, state)
-                output[t, :] = pred_obs + observation_noise.rvs(1)
+            if not self._flag_no_obs:
+                pred_obs = tf.matmul(observation_mat, state) + observation_mean
+                output.append(pred_obs + tf.matmul(observation_cov_L, obs_epses[t]))
             else:
-                output[t, :] = state
-            hidden[t, :] = state
-            state = np.dot(transition_mat, state) + transition_noise.rvs(1)
+                output.append(state)
+            hidden.append(state)
+
+            if t < self.T-1:
+                state_noise = transition_mean + tf.matmul(transition_cov_L, transition_epses[t+1])
+                state = tf.matmul(transition_mat, state) + state_noise
 
         self._sampled_hidden = hidden
-        return output
+        return tf.pack(tf.squeeze(output))
     
     def _logp(self, result, prior_mean, prior_cov,
                  transition_mat, transition_mean, transition_cov,
                  observation_mat=None, observation_mean=None, observation_cov=None):
     
         # define the Kalman filtering calculation within the TF graph
-        if observation_mean is not None:
+        if not self._flag_no_obs:
             observation_mean = tf.reshape(observation_mean, (self.K, 1))
             
         transition_mean = tf.reshape(transition_mean, (self.D, 1))
@@ -114,7 +132,7 @@ class LinearGaussian(ConditionalDistribution):
         for t in range(self.T):
             obs_t = tf.reshape(observations[t], (self.K, 1))
 
-            if observation_mat is not None:
+            if not self._flag_no_obs:
 
                 tmp = tf.matmul(observation_mat, pred_cov)
                 S = tf.matmul(tmp, tf.transpose(observation_mat)) + observation_cov
@@ -134,7 +152,7 @@ class LinearGaussian(ConditionalDistribution):
                 S = pred_cov
                 y = obs_t - pred_mean
                 
-            step_logp = bf.dists.multivariate_gaussian_log_density(y, 0, S)
+            step_logp = util.dists.multivariate_gaussian_log_density(y, 0, S)
 
             filtered_means.append(updated_mean)
             filtered_covs.append(updated_cov)
@@ -159,75 +177,86 @@ class LinearGaussianChainCRF(ConditionalDistribution):
     
     def __init__(self, shape,
                  transition_matrices,
-                 step_noise,
-                 unary_factors=None):
+                 step_noise_means,
+                 step_noise_covs,
+                 unary_means,
+                 unary_variances, **kwargs):
 
-        super(LinearGaussianChainCRF, self).__init__(shape=shape)
-        T, d = shape
+        super(LinearGaussianChainCRF, self).__init__(transition_matrices=transition_matrices, step_noise_means=step_noise_means, step_noise_covs=step_noise_covs, unary_means=unary_means, unary_variances=unary_variances, shape=shape, **kwargs)
 
-        self.T = T
-        self._transition_matrices = transition_matrices
-        self._step_noise = step_noise
 
+    def inputs(self):
+        return {"transition_matrices": unconstrained, "step_noise_means": unconstrained, "step_noise_covs": psd_diagonal, "unary_means": None, "unary_variances": None}
+
+    def _sample_and_entropy(self, transition_matrices,
+                            step_noise_means,
+                            step_noise_covs,
+                            unary_means,
+                            unary_variances):
+
+        T, d = self.shape
         
-        if unary_factors is not None:
-            self._unary_factors = unary_factors
-        else:
-            unary_factors = []
-            for t in range(T):                
-                init_prec_mean = np.float32(np.random.randn((d,)) * 10)
-                unary_factor_prec_mean = tf.Variable(init_prec_mean, name="unary_factor_prec_mean_%d" % t)
-                unary_factor_prec = posdef_variable(d, init_log_diag=10)
-                unary_factor = MVGaussianNatural(unary_factor_prec_mean, unary_factor_prec)
-                unary_factors.append(unary_factor)
-            self._unary_factors = unary_factors
+        upwards_means = tf.unpack(unary_means)
+        upwards_vars = tf.unpack(unary_variances)
+        unary_factors = [MVGaussianMeanCov(mean, tf.diag(vs)) for (mean, vs) in zip(upwards_means, upwards_vars)]
+
+        # transition_matrices is either a d x d matrix, or a T x d x d tensor
+        if len(transition_matrices.get_shape()) == 2:
+            transition_matrices = [transition_matrices for i in range(T)]
+
+        # step noise mean is either a (d,)-vector or a T x d matrix
+        if len(step_noise_means.get_shape()) == 1:
+            step_noise_means = [step_noise_means for i in range(T)]
+
+        # step noise cov is either a d x d matrix or a T x d x d tensor
+        if len(step_noise_covs.get_shape()) == 2:
+            step_noise_covs = [step_noise_covs for i in range(T)]
+
+        step_noise_factors = [MVGaussianMeanCov(step_noise_means[t], step_noise_covs[t]) for t in range(T)]
             
-        self.stochastic_eps = tf.placeholder(dtype=np.float32, shape=self.output_shape, name="eps")
+        back_filtered, logZ = self._pass_messages_backwards(transition_matrices,
+                                                            step_noise_factors,
+                                                            unary_factors)
 
-        self._back_filtered, self._logZ = self._pass_messages_backwards()
-        self.sample, self._entropy = self._sample_forward(self._back_filtered, self.stochastic_eps)
+        self._back_filtered = back_filtered
+        self._logZ = logZ
+        
+        eps = tf.random_normal(shape=self.shape)
+        sample, entropy = self._sample_forward(back_filtered, transition_matrices,
+                                               step_noise_factors, eps)
+        return sample, entropy
 
-    def entropy(self):
-        return self._entropy
+    def _entropy(self):
+        raise Exception("can't compute entropy without a sample...")
         
-    def sample_stochastic_inputs(self):
-        sampled_eps = np.random.randn(*self.output_shape)
-        return {self.stochastic_eps : sampled_eps}
+    def _sample(self):
+        raise Exception("shouldn't try to sample a chainCRF without entropy...")
         
-    def _transition_mat(self, t):
-        try:
-            return tf.convert_to_tensor(self._transition_matrices[t])
-        except:
-            return tf.convert_to_tensor(self._transition_matrices)
-        
-    def _gaussian_noise(self, t):
-        try:
-            return self._step_noise[t]
-        except:
-            return self._step_noise
-
-    def _pass_messages_backwards(self):
+    def _pass_messages_backwards(self, transition_matrices, step_noise_factors, unary_factors):
         messages = []
-        back_filtered = self._unary_factors[self.T-1]
+        T, d = self.shape
+        
+        back_filtered = unary_factors[T-1]
         messages.append(back_filtered)
         logZ = 0.0
-        for t in np.arange(self.T-1)[::-1]:
+        for t in np.arange(T-1)[::-1]:
             back_filtered_pred = reverse_message(back_filtered,
-                                                 self._transition_mat(t),
-                                                 self._gaussian_noise(t))
+                                                 transition_matrices[t],
+                                                 step_noise_factors[t])
 
-            unary_factor = self._unary_factors[t]
-            logZ += back_filtered_pred.multiply_density_logZ(unary_factor)
-            back_filtered = back_filtered_pred.multiply_density(unary_factor)
+            logZ += back_filtered_pred.multiply_density_logZ(unary_factors[t])
+            back_filtered = back_filtered_pred.multiply_density(unary_factors[t])
 
             messages.append(back_filtered)
 
         messages = messages[::-1]
         return messages, logZ
 
-    def _sample_forward(self, back_filtered, eps):
+    def _sample_forward(self, back_filtered, transition_matrices,
+                        step_noise_factors, eps):
         samples = []
 
+        T, d = self.shape
         epses = tf.unpack(eps)
 
         sampling_dist = back_filtered[0]
@@ -236,24 +265,22 @@ class LinearGaussianChainCRF(ConditionalDistribution):
 
         sampling_dists = [sampling_dist]        
         entropies = [sampling_dist.entropy()]
-        for t in np.arange(1, self.T):
-            pred_mean = tf.matmul(self._transition_mat(t-1), z_i)
-            noise = self._gaussian_noise(t-1)
+        for t in np.arange(1, T):
+            pred_mean = tf.matmul(transition_matrices[t-1], z_i)
+            noise = step_noise_factors[t-1]
 
-            #new_prec_mean = noise.prec_mean() + tf.matmul(noise.prec(), pred_mean)
-            #incoming = MVGaussianNatural(new_prec_mean, noise.prec())
             incoming = MVGaussianMeanCov(noise.mean() + pred_mean, noise.cov())
             
             sampling_dist = back_filtered[t].multiply_density(incoming)
             sampling_dists.append(sampling_dist)
             
             z_i = sampling_dist.sample(epses[t])
-            entropies.append(sampling_dist.entropy())            
+            entropies.append(sampling_dist.entropy())
             samples.append(z_i)
 
         self.sampling_dists = sampling_dists
         self.entropies = entropies
 
         entropy = tf.reduce_sum(tf.pack(entropies))
-        sample = tf.reshape(tf.squeeze(tf.pack(samples)), self.output_shape)
+        sample = tf.reshape(tf.squeeze(tf.pack(samples)), self.shape)
         return sample, entropy

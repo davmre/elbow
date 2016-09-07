@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import bayesflow as bf
-from bayesflow.mean_field import MeanFieldInference
+
 
 """
 Bayesian sparse matrix factorization with Gaussian mean-field posterior

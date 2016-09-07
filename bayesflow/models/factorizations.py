@@ -20,7 +20,15 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
     def inputs(self):
         return {"A": unconstrained, "B": unconstrained, "std": positive_exp}
-        
+
+    def derived_parameters(self, A, B, std, **kwargs):
+        derived = {}
+        derived["mean"] = tf.matmul(A, tf.transpose(B))
+        if self.rescale:
+            derived["mean"] /= self.K
+        derived["variance"] = std**2
+        return derived
+    
     def _compute_shape(self, A_shape, B_shape, std_shape):
         N, K = A_shape
         M, K2 = B_shape
@@ -28,11 +36,6 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         prod_shape = (N, M)                
         return prod_shape
     
-    def _compute_dtype(self, A_dtype, B_dtype, std_dtype):
-        assert(A_dtype == B_dtype)
-        assert(A_dtype == std_dtype)
-        return A_dtype
-        
     def _sample(self, A, B, std):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
 
@@ -100,8 +103,117 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
             expected_logp = expected_logp + permutation_correction + signflip_correction
 
         return expected_logp, entropy
-    """
 
+    """
+class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
+    
+    def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, rescale=True, **kwargs):
+
+        # optionally compute (AB' / K) instead of AB',
+        # so that the marginal variance of the result equals
+        # the marginal variance of the inputs
+        self.rescale = rescale
+        self.K = A.shape[1]
+        
+        super(NoisySparseGaussianMatrixProduct, self).__init__(A=A, B=B, std=std, row_idxs=row_idxs, col_idxs=col_idxs, **kwargs) 
+        
+    def inputs(self):
+        return {"A": unconstrained, "B": unconstrained, "std": positive_exp, "row_idxs": None, "col_idxs": None}
+
+    def derived_parameters(self, A, B, std, row_idxs, col_idxs, **kwargs):
+        derived = {}
+        Aidx = tf.gather(A, row_idxs)
+        Bidx = tf.gather(B, col_idxs)
+        prod = tf.reduce_sum(Aidx * Bidx, 1)
+
+        if self.rescale:
+            prod = prod / self.K
+        
+        derived["mean"] = prod
+        derived["variance"] = std**2
+        return derived
+    
+    def _compute_shape(self, A_shape, B_shape, std_shape, row_idxs_shape, col_idxs_shape):
+        N, K = A_shape
+        M, K2 = B_shape
+        assert(K == K2)
+
+        (nidxs,) = row_idxs_shape
+        (nidxs2,) = col_idxs_shape
+        assert( nidxs == nidxs2)
+        return (nidxs,)
+    
+    def _sample(self, A, B, std, row_idxs, col_idxs):
+        eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
+
+        Aidx = tf.gather(A, row_idxs)
+        Bidx = tf.gather(B, col_idxs)
+        prod = tf.reduce_sum(Aidx * Bidx, 1)
+        
+        if self.rescale:
+            prod /= float(self.K)
+
+        return eps * std + prod
+
+    def _logp(self, result, A, B, std, row_idxs, col_idxs):
+
+        Aidx = tf.gather(A, row_idxs)
+        Bidx = tf.gather(B, col_idxs)
+        prod = tf.reduce_sum(Aidx * Bidx, 1)
+        if self.rescale:
+            prod = prod / self.K
+        lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
+        return lp
+
+    def _expected_logp(self, q_result, q_A=None, q_B=None, q_std=None, q_row_idxs=None, q_col_idxs=None):
+
+        std = q_std._sampled if q_std is not None else self.inputs_nonrandom['std']
+        row_idxs = q_row_idxs._sampled if q_row_idxs is not None else self.inputs_nonrandom['row_idxs']
+        col_idxs = q_col_idxs._sampled if q_col_idxs is not None else self.inputs_nonrandom['col_idxs']
+
+        try:
+            var = q_result.variance + tf.square(std)
+            mA, vA = tf.gather(q_A.mean, row_idxs), tf.gather(q_A.variance, row_idxs)
+            mB, vB = tf.gather(q_B.mean, col_idxs), tf.gather(q_B.variance, col_idxs)
+        except Exception as e:
+            # if any Q dists are missing or nongaussian
+            print "devolving to stochastic logp", e
+            A = q_A._sampled if q_A is not None else self.inputs_nonrandom['A']
+            B = q_B._sampled if q_B is not None else self.inputs_nonrandom['B']
+            return self._logp(result=q_result._sampled, A=A, B=B, std=std, row_idxs=row_idxs, col_idxs=col_idxs)
+            
+        expected_result = tf.reduce_sum(mA * mB, 1)
+        if self.rescale:
+            expected_result = expected_result / self.K
+        
+        gaussian_lp = tf.reduce_sum(util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
+
+        vAvB = tf.reduce_sum(vA * vB, 1)
+        vAmB = tf.reduce_sum(vA * tf.square(mB), 1)
+        mAvB = tf.reduce_sum(tf.square(mA) * vB, 1)
+        correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
+        if self.rescale:
+            # rescaling the result is equivalent to rescaling each input by 1/sqrt(K),
+            # which scales the variances (and squared means) by 1/K.
+            # Which then scales each of the product terms vAvB, vAmB, etc by 1/K^2. 
+            correction = correction / (self.K * self.K)
+        
+        expected_lp = gaussian_lp - .5 * correction
+        
+        return expected_lp
+
+    """
+    def elbo_term(self, symmetry_correction_hack=True):
+        expected_logp, entropy = super(NoisyGaussianMatrixProduct, self).elbo_term()
+
+        if symmetry_correction_hack:
+            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+            signflip_correction = self.K * np.log(2)
+            expected_logp = expected_logp + permutation_correction + signflip_correction
+
+        return expected_logp, entropy
+    """
+    
 class NoisyCumulativeSum(ConditionalDistribution):
     
     def __init__(self, A, std,  **kwargs):
@@ -112,10 +224,6 @@ class NoisyCumulativeSum(ConditionalDistribution):
 
     def _compute_shape(self, A_shape, std_shape): 
         return A_shape
-    
-    def _compute_dtype(self, A_dtype, std_dtype):
-        assert(A_dtype == std_dtype)
-        return A_dtype
     
     def _sample(self, A, std):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
@@ -145,7 +253,7 @@ class NoisyCumulativeSum(ConditionalDistribution):
         reduced_gaussian_lp =  tf.reduce_sum(gaussian_lp) 
         reduced_correction = tf.reduce_sum(corrections)
         return reduced_gaussian_lp + reduced_correction
-    
+
     def _logp(self, result, A, std):
         N, D = self.shape
         cumsum_mat = np.float32(np.tril(np.ones((N, N))))
@@ -155,6 +263,12 @@ class NoisyCumulativeSum(ConditionalDistribution):
         gaussian_lp = util.dists.gaussian_log_density(result, expected_X, variance=var)
         return tf.reduce_sum(gaussian_lp)
 
+    def derived_parameters(self, A, std, **kwargs):
+        derived = {}
+        derived["variance"] = std**2
+        derived["mean"] = tf.cumsum(A)
+        return derived
+    
 class GMMClustering(ConditionalDistribution):
 
     def __init__(self, weights, centers, std, **kwargs):
@@ -166,10 +280,6 @@ class GMMClustering(ConditionalDistribution):
 
     def _compute_shape(self, weights_shape, centers_shape, std_shape):
         raise Exception("cannot infer shape for GMMClustering, must specify number of cluster draws")
-    
-    def _compute_dtype(self, weights_dtype, centers_dtype, std_dtype):
-        assert(centers_dtype == std_dtype)
-        return centers_dtype
     
     def _sample(self, weights, centers, std):
         N, D = self.shape
@@ -201,6 +311,7 @@ class GMMClustering(ConditionalDistribution):
         
         return obs_lp
 
+    
 class NoisyLatentFeatures(ConditionalDistribution):
 
     def __init__(self, B, G, std,  **kwargs):
@@ -216,10 +327,12 @@ class NoisyLatentFeatures(ConditionalDistribution):
         assert(K == K2)
         prod_shape = (N, M)                
         return prod_shape
-    
-    def _compute_dtype(self, B_dtype, G_dtype, std_dtype):
-        assert(G_dtype == std_dtype)
-        return G_dtype
+
+    def derived_parameters(self, B, G, std, **kwargs):
+        derived = {}
+        derived["variance"] = std**2
+        derived["mean"] = tf.matmul(B, G)
+        return derived
     
     def _sample(self, B, G, std):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)        
@@ -251,7 +364,7 @@ class NoisyLatentFeatures(ConditionalDistribution):
         std = q_std._sampled if q_std is not None else self.inputs_nonrandom["std"]
         var = q_result.variance + tf.square(std)
         X_means = q_result.mean
-        bernoulli_params = q_B.probs
+        bernoulli_params = q_B.p
         
         expected_X = tf.matmul(bernoulli_params, q_G.mean)
         precisions = 1.0/var
@@ -269,7 +382,8 @@ class NoisyLatentFeatures(ConditionalDistribution):
         return expected_lp
 
     def _entropy(self, **kwargs):
-        # not yet implemented
+        # not implemented yet. we have to return a value, but
+        # let's make sure it's never used.
         return tf.constant(np.nan)
 
     """
@@ -293,10 +407,6 @@ class MultiplicativeGaussianNoise(ConditionalDistribution):
 
     def _compute_shape(self, A_shape, std_shape):
         return A_shape
-    
-    def _compute_dtype(self, A_dtype, std_dtype):
-        assert(A_dtype == std_dtype)
-        return A_dtype
     
     def _sample(self, A, std):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)

@@ -7,6 +7,7 @@ from conditional_dist import ConditionalDistribution
 from parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
 from transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
 
+
 import scipy.stats
 
 class GammaMatrix(ConditionalDistribution):
@@ -28,10 +29,6 @@ class GammaMatrix(ConditionalDistribution):
     def _compute_shape(self, alpha_shape, beta_shape):
         return util.broadcast_shape(alpha_shape, beta_shape)
         
-    def _compute_dtype(self, alpha_dtype, beta_dtype):
-        assert(alpha_dtype==beta_dtype)
-        return alpha_dtype
-
     def default_q(self, **kwargs):
         q1 = Gaussian(shape=self.shape)
         return TransformedDistribution(q1, Exp, name="q_"+self.name)
@@ -60,10 +57,6 @@ class BetaMatrix(ConditionalDistribution):
     def _compute_shape(self, alpha_shape, beta_shape):
         return util.broadcast_shape(alpha_shape, beta_shape)
         
-    def _compute_dtype(self, alpha_dtype, beta_dtype):
-        assert(alpha_dtype==beta_dtype)
-        return alpha_dtype
-
     def default_q(self, **kwargs):
         q1 = Gaussian(shape=self.shape)
         return TransformedDistribution(q1, Logit, name="q_"+self.name)
@@ -101,13 +94,9 @@ class DirichletMatrix(ConditionalDistribution):
     def _compute_shape(self, alpha_shape):        
         return alpha_shape
         
-    def _compute_dtype(self, alpha_dtype):
-        return alpha_dtype
-
     def default_q(self, **kwargs):
         q1 = Gaussian(shape=self.shape)
         return TransformedDistribution(q1, Simplex, name="q_"+self.name)
-        #return SimplexTransformedGaussian(shape=(self.K,), name="
     
     def reparameterized(self):
         return False
@@ -115,8 +104,6 @@ class DirichletMatrix(ConditionalDistribution):
 class BernoulliMatrix(ConditionalDistribution):
     def __init__(self, p=None, **kwargs):
         super(BernoulliMatrix, self).__init__(p=p, **kwargs)        
-
-        self.probs = self.input_val("p")
         
     def inputs(self):
         return {"p": unit_interval}
@@ -137,20 +124,24 @@ class BernoulliMatrix(ConditionalDistribution):
         # and we assume this is in the form of a set of Bernoulli probabilities. 
 
         p_z = q_p._sampled
-        q_z = q_result.probs
-        
-        lp = -tf.reduce_sum(util.dists.bernoulli_entropy(q_z, cross_q = p_z))
+
+        try:
+            q_z = q_result.p
+            lp = -tf.reduce_sum(util.dists.bernoulli_entropy(q_z, cross_q = p_z))
+        except:
+            lp = self._logp(result=q_result._sampled, p=p_z)
         return lp
 
+    def _logp(self, result, p):
+        lps = util.dists.bernoulli_log_density(result, p)
+        return tf.reduce_sum(lps)
+    
     def _entropy(self, p):
         return tf.reduce_sum(util.dists.bernoulli_entropy(p))
     
     def _compute_shape(self, p_shape):
         return p_shape
         
-    def _compute_dtype(self, p_dtype):
-        return np.int32
-
     def default_q(self, **kwargs):
         return BernoulliMatrix(shape=self.shape, name="q_"+self.name)
     
@@ -185,7 +176,7 @@ class MultinomialMatrix(ConditionalDistribution):
     
     def _expected_logp(self, q_result, q_p):
         p = q_p._sampled
-        q = q_result.probs
+        q = q_result.p
 
         lp = tf.reduce_sum(util.dists.multinomial_entropy(q, cross_q=p))
         return lp
@@ -193,67 +184,26 @@ class MultinomialMatrix(ConditionalDistribution):
     def _compute_shape(self, p_shape):
         return p_shape
         
-    def _compute_dtype(self, p_dtype):
-        return np.int32
-
     def reparameterized(self):
         return False
 
 
-class SimplexTransformedGaussian(ConditionalDistribution):
-    # temporary hack all around. need to figure out the generic form for a deterministic transform. I think this requires:
-    #   - transform objects that known their inverses and effects on shape
-    #   - convention of storing a cached (monte carlo) entropy estimate at each node along with the sampled value. 
-    def __init__(self, shape, mean=None, std=None, **kwargs):
-
-        assert(shape is not None and len(shape)==1)
-        n = shape[0]
-
-        self.gaussian = Gaussian(mean=mean, std=std, shape=(n-1,))
-        super(SimplexTransformedGaussian, self).__init__(shape=shape, mean=mean,
-                                                         std=std, **kwargs)
-
-    def inputs(self):
-        return self.gaussian.inputs()
-
-    def _input_shape(self, *args, **kwargs):
-        return self.gaussian._input_shape(*args, **kwargs)
-    
-    def _compute_shape(self, *args, **kwargs):
-        base_shape = self.base.shape
-        # TODO implement this with transforms that can govern shape properly...
-        #transformed_shape = 
-
-    def _sample(self, **kwargs):
-        sampled_gaussian = self.gaussian._sample(**kwargs)
-        _simplex_input = tf.concat(0, [sampled_gaussian, tf.zeros((1,), dtype=tf.float32)])
-        sample, log_jacobian = bf.transforms.simplex(_simplex_input)
-
-        # MASSIVE HACK
-        self._sampled_log_jacobian = log_jacobian
-        return sample
-
-    def _logp(self, **kwargs):
-        raise Exception("not implemented")
-
-    def _expected_logp(self, **kwargs):
-        raise Exception("not implemented")
-
-    def _entropy(self, **kwargs):
-        # ALSO A HACK
-        sampled_entropy = self.gaussian._sampled_entropy + self._sampled_log_jacobian
-        return sampled_entropy
-
+def is_gaussian(dist):
+    """
+    Convenience method to identify Gaussian distributions via duck typing
+    """
+    try:
+        dist.mean
+        dist.variance
+        return True
+    except:
+        return False
 
 class Gaussian(ConditionalDistribution):
     
     def __init__(self, mean=None, std=None, **kwargs):
 
         super(Gaussian, self).__init__(mean=mean, std=std, **kwargs) 
-
-
-        self.mean = self.input_val("mean")
-        self.std = self.input_val("std")
         self.variance = tf.square(self.std)
 
     def inputs(self):
@@ -261,6 +211,9 @@ class Gaussian(ConditionalDistribution):
 
     def outputs(self):
         return ("out",)
+
+    def derived_parameters(self, mean, std, **kwargs):
+        return {"variance": std**2}
     
     def _sample(self, mean, std):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)        
@@ -286,13 +239,13 @@ class Gaussian(ConditionalDistribution):
         mean_sample = get_sample(q_mean, 'mean')
         result_sample = q_result._sampled
         
-        if isinstance(q_result, Gaussian) and not isinstance(q_mean, Gaussian):
+        if is_gaussian(q_result) and not is_gaussian(q_mean):
             cross = util.dists.gaussian_cross_entropy(q_result.mean, q_result.variance, mean_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
-        elif not isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
+        elif not is_gaussian(q_result) and is_gaussian(q_mean):
             cross = util.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance, result_sample, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
-        elif isinstance(q_result, Gaussian) and isinstance(q_mean, Gaussian):
+        elif is_gaussian(q_result) and is_gaussian(q_mean):
             cross = util.dists.gaussian_cross_entropy(q_mean.mean, q_mean.variance + q_result.variance, q_result.mean, tf.square(std_sample))
             elp = -tf.reduce_sum(cross)
         else:
@@ -302,13 +255,9 @@ class Gaussian(ConditionalDistribution):
     def _compute_shape(self, mean_shape, std_shape):
         return util.broadcast_shape(mean_shape, std_shape)
 
-    def _input_shape(self, param):
+    def _input_shape(self, param, **kwargs):
         assert (param in self.inputs().keys())
         return self.shape
-    
-    def _compute_dtype(self, mean_dtype, std_dtype):
-        assert(mean_dtype==std_dtype)
-        return mean_dtype
-        
+
     def reparameterized(self):
         return True

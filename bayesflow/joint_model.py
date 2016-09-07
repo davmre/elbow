@@ -23,6 +23,11 @@ class Model(object):
         # the model includes all ancestors of the passed-in nodes. 
         self.component_nodes = ancestor_closure(nodes)
 
+        self.by_name = {n.name : n for n in self.component_nodes}
+
+    def __getitem__(self, a):
+        return self.by_name[a]
+        
     def construct_elbo(self):
 
         # the variational model includes all ancestors of qdists associated
@@ -47,7 +52,7 @@ class Model(object):
         entropies = {n.name: n.entropy() for n in self.variational_nodes}
         return elps, entropies
 
-    def evaluate_elbo_terms(self, sess):
+    def evaluate_elbo_terms(self, sess, feed_dict=None):
         elps, entropies = self.elbo_terms()
 
         sorted_elps = sorted(elps.items())
@@ -55,7 +60,7 @@ class Model(object):
         elp_names, elp_terms = zip(*sorted(elps.items()))
         entropy_names, entropy_terms = zip(*sorted(entropies.items()))
         all_terms = elp_terms + entropy_terms
-        vals = sess.run(all_terms)
+        vals = sess.run(all_terms, feed_dict=feed_dict)
 
         n_elp = len(elp_terms)
         elp_vals = dict(zip(elp_names, vals[:n_elp]))
@@ -67,11 +72,9 @@ class Model(object):
         posterior_vals = {}
         for node in self.variational_nodes:
 
-            if isinstance(node, WrapperNode):
-                continue
-            
+
             d = {}
-            for name, inp in node.inputs_nonrandom.items():
+            for name, inp in node.inputs_nonrandom.items():                
                 d[name] = session.run(inp)
             if len(d) > 0:
                 posterior_vals[node.name] = d
@@ -92,7 +95,7 @@ class Model(object):
             samples[node] = sval
         return samples
         
-    def train(self, steps=200, adam_rate=0.1, debug=False, session=None):
+    def train(self, eps=0.01, steps=10000, adam_rate=0.1, debug=False, session=None):
         elbo = self.construct_elbo()
 
         try:
@@ -108,6 +111,7 @@ class Model(object):
 
         session = tf.Session() if session is None else session
         session.run(init)
+        old_elbo_val = -np.inf
         for i in range(steps):
             if debug:
                 session.run(debug_ops)
@@ -116,6 +120,11 @@ class Model(object):
 
             elbo_val = session.run((elbo))
             print i, elbo_val
+            if eps is not None and np.abs(elbo_val - old_elbo_val) < eps:
+                break
+            else:
+                old_elbo_val = elbo_val
+            
 
         posterior = self.posterior(session)
         return posterior

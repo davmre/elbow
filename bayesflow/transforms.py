@@ -20,8 +20,28 @@ class DeterministicTransform(ConditionalDistribution):
         assert(isinstance(A, ConditionalDistribution))
         super(DeterministicTransform, self).__init__(A=A, **kwargs)
 
+        if transform.is_structural():
+            # pass through transformed elementwise params
+            transformed = {}
+            for inp_name, shape in A.input_shapes.items():
+                inp = getattr(A, inp_name)
+                if shape==A.shape:
+                    transformed[inp_name] = transform.transform(inp)
+                elif shape==(1,):
+                    transformed[inp_name] = inp
+
+            try:
+                derived = A.derived_parameters(**transformed)
+            except Exception as e:
+                print "could not derive additional parameters for structural transform %s of %s: %s" % (transform, A, e)
+                derived = {}
+
+            self.__dict__.update(transformed)
+            self.__dict__.update(derived)
+            
     def inputs(self):
-        return {"A": None}
+        d = {"A": None}
+        return d
 
     def _sample(self, A):
         tA = self.transform.transform(A)
@@ -50,6 +70,11 @@ class DeterministicTransform(ConditionalDistribution):
         q_A = self.inputs_random["A"].q_distribution()    
         return DeterministicTransform(q_A, self.transform, name="q_"+self.name)
 
+    def is_gaussian(self):
+        return self.transform.is_structural() and self.A.is_gaussian()
+
+
+    
 class TransformedDistribution(ConditionalDistribution):
 
     """
@@ -77,16 +102,28 @@ class TransformedDistribution(ConditionalDistribution):
         self.transform=transform
         super(TransformedDistribution, self).__init__(**kwargs)
 
-        del self._sampled
-        self._sampled, self._sampled_log_jacobian = self.transform.transform(self.dist._sampled, return_log_jac=True)
 
+        for inp_name, shape in self.dist.input_shapes.items():
+            if transform.is_structural() and shape==self.dist.shape:
+                # for structural transforms, pass through
+                # transformed elementwise params
+                inp = getattr(self.dist, inp_name)
+                setattr(self, inp_name, transform.transform(inp))
+            else:
+                # don't pass through params in any other cases
+                # (so we need to delete the values set by the constructor)
+                delattr(self, inp_name)
+
+        
     def _setup_inputs(self, **kwargs):
         self.inputs_random = self.dist.inputs_random
         self.inputs_nonrandom = self.dist.inputs_nonrandom
-
-    def _setup_canonical_sample(self):
-        self._sampled, self._sampled_log_jacobian = self.transform.transform(self.dist._sampled, return_log_jac=True)
-        self._sampled_entropy = self.dist._sampled_entropy + self._sampled_log_jacobian
+        return {}
+        
+    def _sample_and_entropy(self, **kwargs):
+        sample, logjac = self.transform.transform(self.dist._sampled, return_log_jac=True)
+        entropy = self.dist._sampled_entropy + logjac
+        return sample, entropy
         
     def inputs(self):
         return self.dist.inputs()
@@ -146,6 +183,14 @@ class Transform(object):
         # default to assuming a pointwise transform
         return output_shape
 
+    @classmethod
+    def is_structural(cls):
+        # a 'structural' transform is one that simply slices, permutes, or otherwise
+        # rearranges the elements of its input. For example, tranpose is structural, as
+        # is 'get the first column', while 'add 2 to every element' is not.
+        # The DeterministicTransform class propagates input parameters (mean, std, etc)
+        # through structural transformations, but not otherwise. 
+        return False
 
 class SelfInverseTransform(Transform):
 
@@ -296,7 +341,9 @@ class Transpose(SelfInverseTransform):
         N, M = input_shape
         return (M, N)
 
-
+    @classmethod
+    def is_structural(cls):
+        return True
     
     
 def invert_transform(source):
@@ -322,6 +369,10 @@ def invert_transform(source):
         @classmethod
         def input_shape(cls, *args, **kwargs):
             return source.output_shape(*args, **kwargs)
+
+        @classmethod
+        def is_structural(cls):
+            return source.is_structural()
 
     return Inverted
 
@@ -360,6 +411,13 @@ def chain_transforms(*transforms):
             for transform in transforms[::-1]:
                 output_shape = transform.input_shape(output_shape)
             return output_shape
+
+        @classmethod
+        def is_structural(cls, output_shape):
+            is_structural = True
+            for transform in transforms[::-1]:
+                is_structural *= transform.is_structural()
+            return is_structural
 
     return Chain
 

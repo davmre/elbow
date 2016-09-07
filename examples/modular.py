@@ -6,7 +6,7 @@ import bayesflow as bf
 from bayesflow.joint_model import Model
 from bayesflow.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
 from bayesflow.transforms import DeterministicTransform, Exp
-from bayesflow.models.neural import NeuralGaussian, NeuralBernoulli
+from bayesflow.models.neural import neural_gaussian, neural_bernoulli
 from bayesflow.models.factorizations import *
 """
 Examples / test cases for a new API allowing construction of
@@ -110,10 +110,10 @@ def autoencoder():
     Xbatch = tf.constant(np.float32(Xdata[0:N]))
 
     z = Gaussian(mean=0, std=1.0, shape=(N,d_z), name="z")
-    X = NeuralBernoulli(z, d_hidden=d_hidden, d_x=d_x, name="X")
+    X = neural_bernoulli(z, d_hidden=d_hidden, d_out=d_x, name="X")
 
     X.observe(Xbatch)
-    q_z = NeuralGaussian(X=Xbatch, d_hidden=d_hidden, d_z=d_z, name="q_z")
+    q_z = neural_gaussian(X=Xbatch, d_hidden=d_hidden, d_out=d_z, name="q_z")
     z.attach_q(q_z)
 
     jm = Model(X)
@@ -121,6 +121,7 @@ def autoencoder():
     return jm
 
 def main():
+
 
     print "gaussian mean estimation"
     model = gaussian_mean_model()
@@ -141,6 +142,7 @@ def main():
     model = clustering_gmm_model()
     posterior = model.train(steps=1000)
     print posterior
+
 
     print "latent features"
     model = latent_feature_model()

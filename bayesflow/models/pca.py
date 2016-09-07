@@ -1,3 +1,11 @@
+import tensorflow as tf
+import numpy as np
+
+from bayesflow import ConditionalDistribution
+
+from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
+from bayesflow.transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
+
 from bayesflow.util.dists import multivariate_gaussian_log_density, multivariate_gaussian_entropy
 from bayesflow.util.misc import concrete_shape
 
@@ -76,13 +84,7 @@ class InverseProjection(ConditionalDistribution):
         
         return pred_z, L, std
         
-    def _setup_canonical_sample(self):
-        input_samples = {}
-        for param, node in self.inputs_random.items():
-            input_samples[param] = node._sampled
-        for param, tensor in self.inputs_nonrandom.items():
-            input_samples[param] = tensor
-            
+    def _sample_and_entropy(self, **input_samples):
         # more efficient to re-use the same network for sampled value and entropy
         pred_z, L, std = self._build_inverse_projection(**input_samples)
         eps = tf.random_normal(shape=self.shape)
@@ -90,10 +92,12 @@ class InverseProjection(ConditionalDistribution):
         
         self.canonical_pred = pred_z
         self.canonical_L = L        
-        
-        self._sampled = pred_z + tf.transpose(tf.matrix_triangular_solve(tf.transpose(L/std), tf.transpose(eps), lower=False))     
-        self._sampled_entropy = n*unit_entropy        
 
+        n, d_latent = self.shape
+        sample = pred_z + tf.transpose(tf.matrix_triangular_solve(tf.transpose(L/std), tf.transpose(eps), lower=False))     
+        entropy = n*unit_entropy        
+        return sample, entropy
+        
     def _sample(self, X, W, mu, std):
         pred_z, L, std = self._build_inverse_projection(X, W, mu, std)
         eps = tf.random_normal(shape=self.shape)
