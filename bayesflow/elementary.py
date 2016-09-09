@@ -108,7 +108,7 @@ class BernoulliMatrix(ConditionalDistribution):
     def inputs(self):
         return {"p": unit_interval}
 
-    def _input_shape(self, param):
+    def _input_shape(self, param, **kwargs):
         assert (param in self.inputs().keys())
         return self.shape
                      
