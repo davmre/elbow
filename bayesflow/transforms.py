@@ -413,7 +413,7 @@ def chain_transforms(*transforms):
             return output_shape
 
         @classmethod
-        def is_structural(cls, output_shape):
+        def is_structural(cls):
             is_structural = True
             for transform in transforms[::-1]:
                 is_structural *= transform.is_structural()
