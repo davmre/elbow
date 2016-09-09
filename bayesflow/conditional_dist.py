@@ -154,6 +154,13 @@ class ConditionalDistribution(object):
         q = self.q_distribution()
         with tf.name_scope(self.name + "_Elogp") as scope:
             expected_lp = self._expected_logp(q_result = q, **input_qs)
+
+        # the symmetry correction is technically correcting the
+        # entropy of the parent approximating distributions, but 
+        # it arises from the use of the current ConditionalDist
+        # as an observation model, so we insert it here. 
+        expected_lp += self._hack_symmetry_correction()
+        
         return expected_lp
 
     def entropy(self):
@@ -161,6 +168,19 @@ class ConditionalDistribution(object):
 
     def derived_parameters(self, **input_vals):
         return {}
+
+    def _hack_symmetry_correction(self):
+        # conditionaldists that discard information regarding their
+        # inputs will have multiple inputs that can yield a given
+        # output, so the posterior will have multiple modes. In
+        # principle you'd like a variational model to capture all of
+        # these modes. In practice with unimodal posteriors, we will
+        # only fit one mode so may need to add a model-specific
+        # correction factor to the ELBO. Note that this can invalidate the
+        # formal lower bound if the Q distribution *does* in fact cover
+        # multiple modes (e.g., if they are close enough to each other to
+        # be straddled by a single Gaussian). 
+        return np.float32(0.0)
         
     def q_distribution(self):
         if self._q_distribution is None:

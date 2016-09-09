@@ -3,6 +3,7 @@ import tensorflow as tf
 import bayesflow as bf
 import bayesflow.util as util
 
+from bayesflow.elementary import Gaussian
 from bayesflow.conditional_dist import ConditionalDistribution
 from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained
 
@@ -93,18 +94,29 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
         return expected_lp
 
-    """
-    def elbo_term(self, symmetry_correction_hack=True):
-        expected_logp, entropy = super(NoisyGaussianMatrixProduct, self).elbo_term()
+    def default_q(self):
+        if "A" in self.inputs_random:
+            q_A = self.inputs_random["A"].q_distribution()
+        else:
+            q_A = self.inputs_nonrandom["A"]
 
-        if symmetry_correction_hack:
-            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
-            signflip_correction = self.K * np.log(2)
-            expected_logp = expected_logp + permutation_correction + signflip_correction
+        if "B" in self.inputs_random:
+            q_B = self.inputs_random["B"].q_distribution()
+        else:
+            q_B = self.inputs_nonrandom["B"]
 
-        return expected_logp, entropy
+        std = positive_exp(shape=self.shape)
+        return NoisyGaussianMatrixProduct(A=q_A, B=q_B, std=std,
+                                          rescale=self.rescale,
+                                          shape=self.shape, name="q_"+self.name)
 
-    """
+    def _hack_symmetry_correction(self):
+        # TODO replace this with the correct area for the Stiefel manifold
+        permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+        signflip_correction = self.K * np.log(2)
+        return permutation_correction + signflip_correction
+
+
 class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
     
     def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, rescale=True, **kwargs):
@@ -202,17 +214,11 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
         
         return expected_lp
 
-    """
-    def elbo_term(self, symmetry_correction_hack=True):
-        expected_logp, entropy = super(NoisyGaussianMatrixProduct, self).elbo_term()
-
-        if symmetry_correction_hack:
-            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
-            signflip_correction = self.K * np.log(2)
-            expected_logp = expected_logp + permutation_correction + signflip_correction
-
-        return expected_logp, entropy
-    """
+    def _hack_symmetry_correction(self):
+        # TODO replace this with the correct area for the Stiefel manifold
+        permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+        signflip_correction = self.K * np.log(2)
+        return permutation_correction + signflip_correction
     
 class NoisyCumulativeSum(ConditionalDistribution):
     
@@ -232,10 +238,17 @@ class NoisyCumulativeSum(ConditionalDistribution):
     def _expected_logp(self, q_result, q_A, q_std=None):
         
         std = q_std._sampled if q_std is not None else self.inputs_nonrandom['std']
-        
-        var = q_result.variance + tf.square(std)
-        X = q_result.mean
-        
+
+        try:
+            A_mean = q_A.mean
+            A_variance = q_A.variance
+
+            var = q_result.variance + tf.square(std)
+            X = q_result.mean
+        except:
+            A = q_A._sampled if q_A is not None else self.inputs_nonrandom['A']
+            return self._logp(result=q_result._sampled, A=A, std=std)
+            
         # TODO: hugely inefficent hack 
         #N, D = self.output_shape
         #cumsum_mat = np.float32(np.tril(np.ones((N, N))))
@@ -268,6 +281,15 @@ class NoisyCumulativeSum(ConditionalDistribution):
         derived["variance"] = std**2
         derived["mean"] = tf.cumsum(A)
         return derived
+
+    def default_q(self):
+        if "A" in self.inputs_random:
+            q_A = self.inputs_random["A"].q_distribution()
+        else:
+            q_A = self.inputs_nonrandom["A"]
+
+        std = positive_exp(shape=self.shape)
+        return NoisyCumulativeSum(A=q_A, std=std, shape=self.shape, name="q_"+self.name)
     
 class GMMClustering(ConditionalDistribution):
 
@@ -311,6 +333,24 @@ class GMMClustering(ConditionalDistribution):
         
         return obs_lp
 
+    def default_q(self):
+        if "weights" in self.inputs_random:
+            q_weights = self.inputs_random["weights"].q_distribution()
+        else:
+            q_weights = self.inputs_nonrandom["weights"]
+
+        if "centers" in self.inputs_random:
+            q_centers = self.inputs_random["centers"].q_distribution()
+        else:
+            q_centers = self.inputs_nonrandom["centers"]
+
+        std = positive_exp(shape=self.shape)
+        return GMMClustering(weights=q_weights, centers=q_centers, std=std, shape=self.shape, name="q_"+self.name)
+
+    def _hack_symmetry_correction(self):
+        permutation_correction = np.sum(np.log(np.arange(1, self.n_clusters+1))) # log (n_centers)!
+        return permutation_correction
+        
     
 class NoisyLatentFeatures(ConditionalDistribution):
 
@@ -386,17 +426,13 @@ class NoisyLatentFeatures(ConditionalDistribution):
         # let's make sure it's never used.
         return tf.constant(np.nan)
 
-    """
-    def elbo_term(self, symmetry_correction_hack=True):
-        expected_logp, entropy = super(NoisyLatentFeatures, self).elbo_term()
-
-        if symmetry_correction_hack:
-            permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
-            expected_logp = expected_logp + permutation_correction
-                
-        return expected_logp, entropy
-    """
-
+    def default_q(self):
+        return Gaussian(shape=self.shape, name="q_"+self.name)
+    
+    def _hack_symmetry_correction(self):
+        permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
+        return permutation_correction
+    
 class MultiplicativeGaussianNoise(ConditionalDistribution):    
 
     def __init__(self, A, std, **kwargs):
