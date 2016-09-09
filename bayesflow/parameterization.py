@@ -20,7 +20,7 @@ def simplex_constrained(shape=None, init_log=None, name=None):
 
     if init_log is None:
         shape = concrete_shape(shape)
-        init_log = np.float32(np.ones(shape) * -10)
+        init_log = np.float32(np.random.randn(*shape))
 
     log_value = tf.Variable(init_log, name= "log_"+name if name is not None else None)
     return Simplex.transform(log_value)
@@ -32,7 +32,7 @@ def unit_interval(shape=None, init_log=None, name=None):
 
     if init_log is None:
         shape = concrete_shape(shape)
-        init_log = np.float32(np.ones(shape) * -10)
+        init_log = np.float32(np.random.randn(*shape))
 
     log_value = tf.Variable(init_log, name= "log_"+name if name is not None else None)
     return Logit.transform(log_value)
