@@ -8,7 +8,7 @@ from elbow.parameterization import unconstrained, positive_exp, simplex_constrai
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std=None, rescale=True, **kwargs):
+    def __init__(self, A, B, std=None, rescale=False, **kwargs):
 
         # optionally compute (AB' / K) instead of AB',
         # so that the marginal variance of the result equals
@@ -124,7 +124,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
 class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, rescale=True, **kwargs):
+    def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, rescale=False, **kwargs):
 
         # optionally compute (AB' / K) instead of AB',
         # so that the marginal variance of the result equals
