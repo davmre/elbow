@@ -2,10 +2,9 @@ import numpy as np
 import tensorflow as tf
 import copy
 
-import bayesflow as bf
-import bayesflow.util as util
+import elbo.util as util
 
-from bayesflow.joint_model import Model, MovingAverageStopper
+from elbo.joint_model import Model, MovingAverageStopper
 
 from grammar import list_successors
 from models import build_model

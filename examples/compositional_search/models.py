@@ -1,14 +1,13 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
-import bayesflow.util as util
+import elbow.util as util
 
-from bayesflow.elementary import Gaussian, BernoulliMatrix, GammaMatrix, BetaMatrix, DirichletMatrix
-from bayesflow.joint_model import Model, BatchGenerator
-from bayesflow.models.factorizations import *
-from bayesflow.transforms import DeterministicTransform, TransformedDistribution, Exp
-import bayesflow.transforms as transforms
+from elbow.elementary import Gaussian, BernoulliMatrix, GammaMatrix, BetaMatrix, DirichletMatrix
+from elbow.joint_model import Model, BatchGenerator
+from elbow.models.factorizations import *
+from elbow.transforms import DeterministicTransform, TransformedDistribution, Exp
+import elbow.transforms as transforms
 
 from grammar import list_structures
 
@@ -207,7 +206,7 @@ def sanity_check_model_recovery(structures, settings):
             print "WARNING DOES NOT MATCH TRUE STRUCTURE"
     
 def main():
-    from bayesflow import Model
+    from elbow import Model
     from search import ExperimentSettings
     
     N = 100
