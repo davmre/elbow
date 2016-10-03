@@ -205,7 +205,7 @@ class ConditionalDistribution(object):
         if self._q_distribution is not None:
             raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
 
-        print "attaching", q_distribution, "at", self
+        #print "attaching", q_distribution, "at", self
         
         assert(self.shape == q_distribution.shape)
         q_distribution.local = self.local
