@@ -50,7 +50,7 @@ class Model(object):
     def __getitem__(self, a):
         return self.by_name[a]
 
-    def construct_elbo(self):
+    def construct_elbo(self, return_all=False):
         if self.elbo is None:
         
             # the variational model includes all ancestors of qdists associated
@@ -70,12 +70,15 @@ class Model(object):
 
             symmetry_correction = tf.reduce_sum(tf.pack([n._hack_symmetry_correction() for n in self.component_nodes]))
             
-            elp = tf.reduce_sum(tf.pack(global_elps)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(local_elps))
-            entropy = tf.reduce_sum(tf.pack(global_entropies)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(global_entropies))
-            
-            self.elbo = elp+entropy + symmetry_correction
-            
-        return self.elbo
+            self.elp = tf.reduce_sum(tf.pack(global_elps)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(local_elps))
+            self.entropy = tf.reduce_sum(tf.pack(global_entropies)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(global_entropies))
+
+            self.elbo = self.elp+self.entropy + symmetry_correction
+
+        if return_all:
+            return self.elbo, self.elp, self.entropy
+        else:
+            return self.elbo
 
     #def build_variational_model(self):
     #    explicit_qnodes = [node.q_distribution() for node in self.component_nodes]
@@ -179,7 +182,7 @@ class Model(object):
         
     def train(self, adam_rate=0.1, stopping_rule=None, steps=None,
               avg_decay=None, debug=False, print_s=1):
-        elbo = self.construct_elbo()
+        elbo, elp, entropy = self.construct_elbo(return_all=True)
 
 
         if stopping_rule is None:
@@ -206,7 +209,7 @@ class Model(object):
         elbo_val = None
         running_elbo = 0
         i = 0
-        t = time.time()
+        t = -np.inf
         stopping_rule.reset()
         while not stopping_rule.observe(elbo_val):
             if debug:
@@ -216,9 +219,9 @@ class Model(object):
                 
             session.run(train_step, feed_dict=fd)
 
-            elbo_val = session.run((elbo), feed_dict=fd)
+            elbo_val, elp_val, entropy_val = session.run((elbo, elp, entropy), feed_dict=fd)
             if print_s is not None and (time.time() - t) > print_s:
-                print i, elbo_val
+                print "step %d elp %.2f entropy %.2f elbo %.2f" % (i, elbo_val, elp_val, entropy_val)
                 t = time.time()
                 
             i += 1

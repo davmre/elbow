@@ -77,7 +77,7 @@ def main():
     transformation.
     """
 
-    jm.train()
+    jm.train(avg_decay=0.995)
     posterior = jm.posterior()
     
     qA = posterior["q_A"]["mean"]
