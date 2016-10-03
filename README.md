@@ -50,7 +50,7 @@ Currently the best reference is the source code itself. The `examples` directory
 
 # Custom components
 
-Elbow makes it easy to define new types of random variables. A new variable must extend the `ConditionalDistribution` class, specify its inputs, and provide methods for sampling and computing log probabilities. For example, let's implement a [Laplace distribution](https://en.wikipedia.org/wiki/Laplace_distribution), which is like a Gaussian but with longer tails.
+Elbow makes it easy to define new types of random variables. A new variable must extend the `ConditionalDistribution` class, specify its inputs, and provide methods for sampling and computing the log probability density. For example, let's implement a [Laplace distribution](https://en.wikipedia.org/wiki/Laplace_distribution), which is like a Gaussian but with longer tails.
 
 ```python
 from elbow import ConditionalDistribution
@@ -74,7 +74,7 @@ Each input is provided a default parameterization, to be used when optimizing ov
 
 Note that the sampling method generates samples by applying a transformation (in this case the inverse CDF) to a random source (uniform in this case), so that the sample is differentiable with respect to the location and scale parameters. This is the so-called "reparameterization trick", which allows us to optimize the parameters with respect to a a Monte Carlo approximation of the evidence lower bound (ELBO). Currently we assume all sampling methods are reparameterized in this way, though we plan to implement alternative gradient estimators (e.g., REINFORCE/BBVI) in the future.
 
-To use our new distribution in variational models, we can also optionally implement an analytic entropy (if we did not do this, Elbow would default to the Monte Carlo entropy given by evaluating the log probability at a sampled value). As a convenience we also hint that the default variational model for a Laplace-distributed variable should itself be a Laplace distribution.
+To use our new distribution in variational models, we can also optionally implement an analytic entropy (if we did not do this, Elbow would default to the Monte Carlo entropy given by evaluating the log density at a sampled value). As a convenience we also hint that the default variational model for a Laplace-distributed variable should itself be a Laplace distribution.
 
 ```python
    def _entropy(self, loc, scale):
