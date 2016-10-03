@@ -188,6 +188,29 @@ class MultinomialMatrix(ConditionalDistribution):
         return False
 
 
+class Laplace(ConditionalDistribution):
+
+    def __init__(self, loc=None, scale=None, **kwargs):
+        super(Laplace, self).__init__(loc=loc, scale=scale, **kwargs)
+    
+    def inputs(self):
+        return {"loc": unconstrained, "scale": positive_exp}
+
+    def _sample(self, loc, scale):
+        base = tf.random_uniform(shape=self.shape, dtype=tf.float32) - 0.5
+        std_laplace = tf.sign(base) * tf.log(1-2*tf.abs(base))
+        return loc + scale * std_laplace
+
+    def _logp(self, result, loc, scale):
+        return -tf.reduce_sum(tf.abs(result-loc)/scale - tf.log(2*scale))
+
+    def _entropy(self, loc, scale):
+        return 1 + tf.reduce_sum(tf.log(2*scale))
+
+    def default_q(self, **kwargs):
+        return Laplace(shape=self.shape, name="q_"+self.name)
+
+    
 def is_gaussian(dist):
     """
     Convenience method to identify Gaussian distributions via duck typing
@@ -199,6 +222,7 @@ def is_gaussian(dist):
     except:
         return False
 
+    
 class Gaussian(ConditionalDistribution):
     
     def __init__(self, mean=None, std=None, **kwargs):
