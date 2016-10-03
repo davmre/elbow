@@ -29,7 +29,7 @@ Now let's try running inference given the sampled data. To do this, we first spe
 
 ```python
 X.observe(sampled["X"])
-mu.attach_q(Gaussian(shape=mu.shape, name="q_mu"))
+mu.attach_q(Gaussian(shape=mu.shape, name="q_mu")) # not actually necessary, would be inferred automatically, but shown here for illustration
 ```
 
 We then call the model's `train` method, which automatically constructs and optimizes a variational bound inside a Tensorflow session:
