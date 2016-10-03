@@ -1,11 +1,10 @@
 import numpy as np
 import tensorflow as tf
-import bayesflow as bf
-import bayesflow.util as util
+import elbow.util as util
 
-from bayesflow.elementary import Gaussian
-from bayesflow.conditional_dist import ConditionalDistribution
-from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained
+from elbow.elementary import Gaussian
+from elbow.conditional_dist import ConditionalDistribution
+from elbow.parameterization import unconstrained, positive_exp, simplex_constrained
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
@@ -116,7 +115,13 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         signflip_correction = self.K * np.log(2)
         return permutation_correction + signflip_correction
 
-
+    def _inference_networks(self, q_result):        
+        from pca import MeanFieldLinearGaussian
+        q_A = MeanFieldLinearGaussian(X=q_result, mu=0.,
+                                      shape=self.input_shapes["A"],
+                                      name="q_A")
+        return {"A": q_A}
+        
 class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
     
     def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, rescale=True, **kwargs):
@@ -233,7 +238,7 @@ class NoisyCumulativeSum(ConditionalDistribution):
     
     def _sample(self, A, std):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
-        return eps * std + tf.cumsum(A)
+        return eps * std + tf.cumsum(A, axis=1)
 
     def _expected_logp(self, q_result, q_A, q_std=None):
         
@@ -254,13 +259,13 @@ class NoisyCumulativeSum(ConditionalDistribution):
         #cumsum_mat = np.float32(np.tril(np.ones((N, N))))
         #r = np.float32(np.arange(N, 0, -1)).reshape((1, -1))
 
-        expected_X = tf.cumsum(q_A.mean)
+        expected_X = tf.cumsum(q_A.mean, axis=1)
         gaussian_lp = util.dists.gaussian_log_density(X, expected_X, variance=var)
 
         # performs a reverse cumulative sum
-        #R = tf.matmul(cumsum_mat, 1.0/var, transpose_a=True)
-        rvar = tf.reverse(1.0/var, [True, False])
-        R = tf.reverse(tf.cumsum(rvar), [True, False])
+        #R = tf.matmul(cumsum_mat, 1.0/var, transpose_a=True)        
+        rvar = tf.reverse(1.0/var, [False, True])
+        R = tf.reverse(tf.cumsum(rvar, axis=1), [False, True])
         corrections = -.5 * R * q_A.variance
 
         reduced_gaussian_lp =  tf.reduce_sum(gaussian_lp) 
@@ -271,7 +276,7 @@ class NoisyCumulativeSum(ConditionalDistribution):
         N, D = self.shape
         cumsum_mat = np.float32(np.tril(np.ones((N, N))))
 
-        expected_X = tf.cumsum(A)
+        expected_X = tf.cumsum(A, axis=1)
         var = tf.square(std)
         gaussian_lp = util.dists.gaussian_log_density(result, expected_X, variance=var)
         return tf.reduce_sum(gaussian_lp)
@@ -279,7 +284,7 @@ class NoisyCumulativeSum(ConditionalDistribution):
     def derived_parameters(self, A, std, **kwargs):
         derived = {}
         derived["variance"] = std**2
-        derived["mean"] = tf.cumsum(A)
+        derived["mean"] = tf.cumsum(A, axis=1)
         return derived
 
     def default_q(self):
@@ -290,7 +295,56 @@ class NoisyCumulativeSum(ConditionalDistribution):
 
         std = positive_exp(shape=self.shape)
         return NoisyCumulativeSum(A=q_A, std=std, shape=self.shape, name="q_"+self.name)
+
+    def _inference_networks(self, q_result):
+
+        if "std" in self.inputs_random:
+            q_std = self.inputs_random["std"].q_distribution()
+        else:
+            q_std = self.inputs_nonrandom["std"]
+
+        return {"A": CumsumInference(C=q_result, std=q_std)}
+
+
     
+class CumsumInference(ConditionalDistribution):
+
+    def __init__(self, C, std, **kwargs):
+        super(CumsumInference, self).__init__(C=C, std=std, **kwargs)
+
+    def inputs(self):
+        return {"C": None, "std": positive_exp}
+
+    def _compute_shape(self, C_shape, **kwargs):
+        return C_shape
+
+    def _invert_cumsum(self, A):
+        # the inverse of a cumsum is the discrete derivative,
+        # i.e., y_t = x_t - x_{t-1}
+
+        paddings = np.array([[1, 0], [0, 0]], dtype=int)
+        # shift A down by one, replacing the first row with zeros
+        padded = tf.pad(A, paddings, mode="CONSTANT")
+        offby1 = tf.slice(padded , [0, 0], A.get_shape())
+        return A-offby1
+        
+    def _sample(self, C, std, **kwargs):
+        eps = tf.random_normal(shape=self.shape, dtype=self.dtype) * std
+        return self._invert_cumsum(C+eps)
+        
+    def _entropy(self, C, std, **kwargs):
+        n, d = self.shape
+
+        # conditional dist is MVN independently for each
+        # column, with covariance (C' C)^-1 * std**2
+        # where C is the cumsum matrix. but the MVN
+        # entropy depends only on the determinant of the covariance.
+        # which is just (std**2)^n in our case since C has
+        # determinant 1. thus the logdet is 2n * log std.
+        log_2pi = 1.83787706641
+        col_entropy = .5*n*(1 + log_2pi) + n * tf.log(std)
+        return d*col_entropy
+        
 class GMMClustering(ConditionalDistribution):
 
     def __init__(self, weights, centers, std, **kwargs):
@@ -351,7 +405,13 @@ class GMMClustering(ConditionalDistribution):
         permutation_correction = np.sum(np.log(np.arange(1, self.n_clusters+1))) # log (n_centers)!
         return permutation_correction
         
-    
+    def _inference_networks(self, q_result):
+        # TODO could write a version of this model that reifies the
+        # cluster assignments and then marginalizes them with an
+        # inference network.
+        return {}
+        
+
 class NoisyLatentFeatures(ConditionalDistribution):
 
     def __init__(self, B, G, std,  **kwargs):
@@ -432,7 +492,19 @@ class NoisyLatentFeatures(ConditionalDistribution):
     def _hack_symmetry_correction(self):
         permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
         return permutation_correction
-    
+
+    def _inference_networks(self, q_result):
+        # given features G, return posterior on feature indicators B.
+
+        n, d = self.shape
+        
+        from pca import MeanFieldBernoulli
+        q_B = MeanFieldBernoulli(X=q_result,
+                                 shape=self.input_shapes["B"],
+                                 name="q_B")
+        return {"B": q_B}
+
+            
 class MultiplicativeGaussianNoise(ConditionalDistribution):    
 
     def __init__(self, A, std, **kwargs):

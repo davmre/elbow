@@ -202,9 +202,7 @@ def is_gaussian(dist):
 class Gaussian(ConditionalDistribution):
     
     def __init__(self, mean=None, std=None, **kwargs):
-
         super(Gaussian, self).__init__(mean=mean, std=std, **kwargs) 
-        self.variance = tf.square(self.std)
 
     def inputs(self):
         return {"mean": unconstrained, "std": positive_exp}
@@ -252,12 +250,5 @@ class Gaussian(ConditionalDistribution):
             elp = self._logp(result=result_sample, mean=mean_sample, std=std_sample)
         return elp
             
-    def _compute_shape(self, mean_shape, std_shape):
-        return util.broadcast_shape(mean_shape, std_shape)
-
-    def _input_shape(self, param, **kwargs):
-        assert (param in self.inputs().keys())
-        return self.shape
-
     def reparameterized(self):
         return True

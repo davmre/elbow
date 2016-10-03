@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 from special_hacks import gammaln, betaln
-from bayesflow.util.misc import extract_shape
+from misc import extract_shape
 import scipy.special
 
 
@@ -242,7 +242,7 @@ def dirichlet_log_density(x, alpha, clip_finite=True):
     """
 
     if clip_finite:
-        logx = tf.log(tf.clip_by_value(x, 1e-45, 1.0), name="dirichlet_logx")
+        logx = tf.log(tf.clip_by_value(x, 1e-37, 1.0), name="dirichlet_logx")
     else:
         logx = tf.log(x, name="dirichlet_logx")
 
@@ -267,8 +267,8 @@ def multinomial_entropy(p, cross_q=None, clip_finite=True):
         cross_q = p
     
     if clip_finite:
-        lq = tf.log(tf.clip_by_value(cross_q, 1e-45, 1.0), name="multinomial_logq")
-        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-45, 1.0), name="multinomial_log1q")
+        lq = tf.log(tf.clip_by_value(cross_q, 1e-37, 1.0), name="multinomial_logq")
+        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-37, 1.0), name="multinomial_log1q")
     else:
         lq = tf.log(cross_q, name="multinomial_logq")
         lq1 = tf.log(1.0-cross_q, name="multinomial_log1q")
@@ -284,8 +284,8 @@ def bernoulli_entropy(p, cross_q=None, clip_finite=True):
         cross_q = p
     
     if clip_finite:
-        lq = tf.log(tf.clip_by_value(cross_q, 1e-45, 1.0), name="bernoulli_logq")
-        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-45, 1.0), name="bernoulli_log1q")
+        lq = tf.log(tf.clip_by_value(cross_q, 1e-37, 1.0), name="bernoulli_logq")
+        lq1 = tf.log(tf.clip_by_value(1.0-cross_q, 1e-37, 1.0), name="bernoulli_log1q")
     else:
         lq = tf.log(cross_q, name="bernoulli_logq")
         lq1 = tf.log(1.0-cross_q, name="bernoulli_log1q")
@@ -296,10 +296,10 @@ def bernoulli_entropy(p, cross_q=None, clip_finite=True):
 def bernoulli_kl(p, q, clip_finite=True):
 
     if clip_finite:
-        lp = tf.log(tf.clip_by_value(p, 1e-45, 1.0), name="bernoulli_logp")
-        lp1 = tf.log(tf.clip_by_value(1.0-p, 1e-45, 1.0), name="bernoulli_log1p")
-        lq = tf.log(tf.clip_by_value(q, 1e-45, 1.0), name="bernoulli_logq")
-        lq1 = tf.log(tf.clip_by_value(1.0-q, 1e-45, 1.0), name="bernoulli_log1q")
+        lp = tf.log(tf.clip_by_value(p, 1e-37, 1.0), name="bernoulli_logp")
+        lp1 = tf.log(tf.clip_by_value(1.0-p, 1e-37, 1.0), name="bernoulli_log1p")
+        lq = tf.log(tf.clip_by_value(q, 1e-37, 1.0), name="bernoulli_logq")
+        lq1 = tf.log(tf.clip_by_value(1.0-q, 1e-37, 1.0), name="bernoulli_log1q")
     else:
         lp = tf.log(p, name="bernoulli_logp")
         lp1 = tf.log(1.0-p, name="bernoulli_log1p")
@@ -314,8 +314,8 @@ def bernoulli_log_density(x, p, clip_finite=True):
     if clip_finite:
         # avoid taking log(0) for float32 inputs
         # TODO: adapt to float64, etc. 
-        lp = tf.log(tf.clip_by_value(p, 1e-45, 1.0), name="bernoulli_logp")
-        lp1 = tf.log(tf.clip_by_value(1.0-p, 1e-45, 1.0), name="bernoulli_log1p")
+        lp = tf.log(tf.clip_by_value(p, 1e-37, 1.0), name="bernoulli_logp")
+        lp1 = tf.log(tf.clip_by_value(1.0-p, 1e-37, 1.0), name="bernoulli_log1p")
     else:
         lp = tf.log(p, name="bernoulli_logp")
         lp1 = tf.log(1.0-p, name="bernoulli_log1p")

@@ -1,13 +1,11 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
-
-from bayesflow.joint_model import Model
-from bayesflow.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
-from bayesflow.transforms import DeterministicTransform, Exp
-from bayesflow.models.neural import neural_gaussian, neural_bernoulli
-from bayesflow.models.factorizations import *
+from elbow.joint_model import Model
+from elbow.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
+from elbow.transforms import DeterministicTransform, Exp
+from elbow.models.neural import neural_gaussian, neural_bernoulli
+from elbow.models.factorizations import *
 """
 Examples / test cases for a new API allowing construction of
 models and inference routines from modular components.

@@ -3,7 +3,8 @@ import tensorflow as tf
 
 import uuid
 
-from util.misc import concrete_shape
+
+from util.misc import concrete_shape, broadcast_shape
 
 
 class ConditionalDistribution(object):
@@ -16,17 +17,15 @@ class ConditionalDistribution(object):
     Thus the object graph implicitly represents a directed graphical model (Bayesian network).
     """
 
-    def __init__(self, shape=None, minibatch_scale_factor = None,
-                 name=None, model="auto", **kwargs):
+    def __init__(self, shape=None, name=None, local=False, **kwargs):
 
         if name is None:
             name = str(uuid.uuid4().hex)[:6]
-            print "constructed name", name
+            #print "constructed name", name
         self.name = name
 
+        self.local = local
         self._q_distribution = None
-        self.minibatch_scale_factor = minibatch_scale_factor
-
         self.shape = shape
         
         # store map of input local names to the canonical names, that
@@ -72,8 +71,10 @@ class ConditionalDistribution(object):
         free_inputs = []
         
         for input_name, default_constructor in self.inputs().items():
-            # inputs can be provided as constants, or nodes modeled by bayesflow distributions.
-            if isinstance(kwargs[input_name], ConditionalDistribution):
+            # inputs can be other random variables, bare tf Tensors, numpy arrays, or left unspecified/free.
+            if input_name not in kwargs or kwargs[input_name] is None:
+                free_inputs.append((input_name, default_constructor)) 
+            elif isinstance(kwargs[input_name], ConditionalDistribution):
                 node = kwargs[input_name]
                 self.inputs_random[input_name] = node
                 input_shapes[input_name] = node.shape
@@ -86,8 +87,7 @@ class ConditionalDistribution(object):
                     tf_value = tf.convert_to_tensor(v, dtype=tf.float32)
                 self.inputs_nonrandom[input_name] = tf_value
                 input_shapes[input_name] = concrete_shape(tf_value.get_shape())
-            elif kwargs[input_name] is None:
-                free_inputs.append((input_name, default_constructor))
+               
 
         # free inputs will be optimized over
         for free_input, constructor in free_inputs:
@@ -96,7 +96,14 @@ class ConditionalDistribution(object):
             self.inputs_nonrandom[free_input] = constructor(shape=shape)
 
         return input_shapes
-            
+
+    def _compute_shape(self, **shapes):
+        return broadcast_shape(**shapes)
+    
+    def _input_shape(self, param, **kwargs):
+        assert (param in self.inputs().keys())
+        return self.shape
+
     def _sample_and_entropy(self, **kwargs):
         """
         Models with monte carlo entropy define the (stochastic) entropy in terms 
@@ -154,18 +161,19 @@ class ConditionalDistribution(object):
         q = self.q_distribution()
         with tf.name_scope(self.name + "_Elogp") as scope:
             expected_lp = self._expected_logp(q_result = q, **input_qs)
-
-        # the symmetry correction is technically correcting the
-        # entropy of the parent approximating distributions, but 
-        # it arises from the use of the current ConditionalDist
-        # as an observation model, so we insert it here. 
-        expected_lp += self._hack_symmetry_correction()
         
         return expected_lp
 
     def entropy(self):
         return self._sampled_entropy
 
+    def inference_networks(self):
+        assert(self._q_distribution is not None)
+        return self._inference_networks(q_result = self._q_distribution)
+    
+    def _inference_networks(self, q_result):
+        return {}
+        
     def derived_parameters(self, **input_vals):
         return {}
 
@@ -197,7 +205,10 @@ class ConditionalDistribution(object):
         if self._q_distribution is not None:
             raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
 
+        print "attaching", q_distribution, "at", self
+        
         assert(self.shape == q_distribution.shape)
+        q_distribution.local = self.local
         self._q_distribution = q_distribution
                                         
     def observe(self, observed_val):
@@ -205,8 +216,13 @@ class ConditionalDistribution(object):
         q_dist = WrapperNode(tf_value, name="observed_" + self.name)
         self.attach_q(q_dist)
         return q_dist
+
+    def observe_placeholder(self):
+        tf_value = tf.placeholder(shape=self.shape, dtype=self.dtype)
+        q_dist = WrapperNode(tf_value, name="observed_" + self.name)
+        self.attach_q(q_dist)
+        return tf_value
         
-    
     def __str__(self):
         return repr(self)
 

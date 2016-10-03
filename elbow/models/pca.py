@@ -1,13 +1,13 @@
 import tensorflow as tf
 import numpy as np
 
-from bayesflow import ConditionalDistribution
+from elbow import ConditionalDistribution
 
-from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
-from bayesflow.transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
+from elbow.parameterization import unconstrained, unconstrained_zeros, positive_exp, simplex_constrained, unit_interval, unconstrained_small, unconstrained_scale
+from elbow.transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
 
-from bayesflow.util.dists import multivariate_gaussian_log_density, multivariate_gaussian_entropy
-from bayesflow.util.misc import concrete_shape
+from elbow.util.dists import multivariate_gaussian_log_density, multivariate_gaussian_entropy, gaussian_entropy, gaussian_log_density, bernoulli_entropy, bernoulli_log_density
+from elbow.util.misc import concrete_shape
 
 class NoisyRandomProjection(ConditionalDistribution):
     """
@@ -118,3 +118,113 @@ class InverseProjection(ConditionalDistribution):
         rows = tf.unpack(result - pred_z)
         lps = [multivariate_gaussian_log_density(r, mu=0, L_prec=L/std) for r in rows]
         return tf.reduce_sum(tf.pack(lps))
+
+
+class MeanFieldLinearGaussian(ConditionalDistribution):
+    
+    def __init__(self, X, W=None, mu=None, std=None, **kwargs):
+        self.X_shape = concrete_shape(Z.get_shape())[1] if isinstance(X, tf.Tensor) else X.shape
+        super(MeanFieldLinearGaussian, self).__init__(X=X, W=W, mu=mu, std=std, **kwargs)
+        
+    def inputs(self):
+        return {"X": None, "W": unconstrained, "mu": unconstrained_zeros, "std": positive_exp}
+
+    def _compute_shape(self, X_shape, W_shape, mu_shape, std_shape):
+        n, d = X_shape
+        m, d = W_shape
+        return (n, m)
+    
+    def _input_shape(self, param, **kwargs):
+        assert(self.shape is not None)
+        n, m = self.shape
+        n2, d = self.X_shape
+        assert(n==n2)
+        if param=="W":
+            return (m, d)
+        elif param=="mu":
+            return (m,)
+        elif param=="std":
+            return (m,)
+        else:
+            raise Exception("unknown param %s" % param)
+            
+    def _sample(self, X, W, mu, std):
+        
+        # X: n x d
+        # W: m x d
+        # Z: n x m
+        proj = tf.matmul(X, tf.transpose(W)) + mu         
+        eps = tf.random_normal(shape=self.shape)
+        sampled = proj + eps*std
+        return sampled
+    
+    def _entropy(self, X, W, mu, std):
+        n, m = self.shape
+        return n*gaussian_entropy(stddev=std)
+        
+    
+    def _logp(self, result, X, W, mu, std):
+        proj = tf.matmul(X, tf.transpose(W)) + mu    
+        return gaussian_log_density(result, mu=proj, stddev=std)
+
+    def derived_parameters(self, X, W, mu, std, **kwargs):
+        proj = tf.matmul(X, tf.transpose(W)) + mu    
+        return {"mean": proj}
+
+    
+class MeanFieldBernoulli(ConditionalDistribution):
+    
+    def __init__(self, X, W=None, b=None, **kwargs):
+        self.X_shape = concrete_shape(Z.get_shape())[1] if isinstance(X, tf.Tensor) else X.shape
+        self.scale = 10.0
+        super(MeanFieldBernoulli, self).__init__(X=X, W=W, b=b, **kwargs)
+
+
+        
+    def inputs(self):
+        return {"X": None, "W": unconstrained, "b": unconstrained_small}
+
+    def _compute_shape(self, X_shape, W_shape, mu_shape, std_shape):
+        n, d = X_shape
+        m, d = W_shape
+        return (n, m)
+    
+    def _input_shape(self, param, **kwargs):
+        assert(self.shape is not None)
+        n, m = self.shape
+        n2, d = self.X_shape
+        assert(n==n2)
+        if param=="W":
+            return (m, d)
+        elif param=="b":
+            return (m,)
+        else:
+            raise Exception("unknown param %s" % param)
+            
+    def _sample(self, X, W, b):
+        
+        # X: n x d
+        # W: m x d
+        # Z: n x m
+        proj = tf.matmul(X, tf.transpose(W)) + b
+        probs = Logit.transform(proj / self.scale)
+
+        unif = tf.random_uniform(shape=self.shape, dtype=tf.float32)
+        return tf.cast(unif < probs, self.dtype)
+    
+    def _entropy(self, X, W, b):
+        n, m = self.shape
+        proj = tf.matmul(X, tf.transpose(W)) + b
+        probs = Logit.transform(proj / self.scale)
+        return tf.reduce_sum(bernoulli_entropy(probs))
+        
+    def _logp(self, result, X, W, b):
+        proj = tf.matmul(X, tf.transpose(W)) + b
+        probs = Logit.transform(proj / self.scale)
+        lps = bernoulli_log_density(result, probs)
+        return tf.reduce_sum(lps)
+
+    def derived_parameters(self, X, W, b, **kwargs):
+        proj = tf.matmul(X, tf.transpose(W)) + b
+        probs = Logit.transform(proj / self.scale)
+        return {"p": probs}

@@ -1,27 +1,106 @@
-# Bayesflow
+# Elbow
 
-Bayesflow is a minimalist framework for probabilistic programming, built atop TensorFlow. The goal is to make it easy to define and compose sophisticated probability models and inference strategies. 
+Elbow is a flexible framework for probabilistic programming, built atop TensorFlow. The goal is to make it easy to define and compose sophisticated probability models and inference strategies. Currently the focus is on variational inference, in which we explicitly optimize a evidence bound (the ELBO) corresponding to the KL divergence between an approximate posterior representation and the true (unknown) posterior. Elbow supports the construction of sophisticated approximate posteriors, including [inference networks](https://arxiv.org/abs/1312.6114) and [structured message passing](https://arxiv.org/abs/1603.06277) as well as general-purpose [variational models](https://arxiv.org/abs/1511.02386) using the same model components as base-level models. 
 
-Current status is extremely immature, pre-pre-pre-alpha, many components are not yet implemented or even designed and major breaking changes may happen at any time. If you want to help out and/or and have ideas for what to build, please get in touch!
+# Usage
 
-## Motivation
+Elbow is oriented around directed graphical models. Currently the focus is on models with continuous-valued variables. The fundamental unit is the `ConditionalDistribution`, which defines the distribution of a random variable conditioned on a set of inputs (which may be the empty set). For example, a `Gaussian` distribution takes as inputs its mean and standard deviation. To model a Gaussian with unknown mean, we write
 
-The computational graph abstraction implemented by TensorFlow, Theano, and others has been an powerful catalyst for research in deep learning, removing the need for tedious and error-prone gradient calculations and allowing for reuse of modular high-level components. 
+```
+from elbow import Gaussian, Model
 
-Similar ideas have recently risen to prominence in probabilistic programming; for example, [Stan](http://mc-stan.org/) uses automatic differentiation to construct Hamiltonian MCMC or black-box variational inference algorithms for a wide range of models. However, research work in probabilistic modeling and inference often involves experimenting with novel model components and/or inference strategies not available in a prebuilt package. 
+mu = Gaussian(mean=0, std=10, name="mu")
+X = Gaussian(mean=mu, std=1, shape=(100,), name="X")
+```
 
-Bayesflow provides reusable building blocks for representing probability models and inference algorithms within a TensorFlow graph. The underlying graph is fully exposed to the user and can be arbitrarily modified and inspected. In particular, it is easy to integrate traditional modeling components with black-box "neural" decoders and/or encoding networks. The TensorFlow execution layer also enables (at least in principle) deployment to GPUs, clusters, and mobile devices.
+Notice that inputs can be specified as Python literals or as existing random variable objects. Tensors and numpy arrays are also valid. Note that we specify the shape of X in order to draw multiple samples. 
 
-## Components
-Currently implemented (at least partially):
-- Building blocks for expressing differentiable likelihoods:
-  - `bf.dists`: Common probability densities
-  - `bf.transforms`: differentiable transformations for constrained latent variables
-- Inference algorithms:
-  - `bayesflow.mean_field`: mean field Gaussian posterior inference via the reparameterization trick
-  - `bayesflow.mh`: Metropolis-Hastings with random-walk Gaussian proposals
+A set of conditional distributions defines a joint distribution. We represent this using a `Model`, which defines convenience methods for sampling from and performing inference over a directed probability model. First we can sample some data from our model:
 
-The `examples` directory contains several models (linear regression, matrix factorization, beta-bernoulli, variational autoencoders) implemented using Bayesflow components to varying extents.
+```
+m = Model(X)
+sampled = m.sample()
+
+print "mu is", sampled["mu"]
+print "empirical mean is", np.mean(sampled["X"])
+```
+
+Now let's try running inference given the sampled data. To do this, we first specify a form for the variational posterior. We do this using the same `ConditionalDistribution` components as the object-level model. In this example, we'll let the posterior on X be a point mass at the observed values, and the posterior on mu be Gaussian. 
+
+```
+X.observe(sampled["X"])
+mu.attach_q(Gaussian(shape=mu.shape, name="q_mu"))
+```
+
+We then call the model's `train` method, which automatically constructs and optimizes a variational bound inside a Tensorflow session:
+
+```
+m.train(steps=500)
+posterior = m.posterior()
+print "posterior on mu has mean %.2f and std %.2f" % (posterior["q_mu"]["mean"], posterior["q_mu"]["std"])
+```
+
+Since the conjugate prior for a Gaussian mean is itself Gaussian, in this simple example the variational posterior should be exact. 
+
+# Documentation
+
+TODO write more documentation including examples of inference networks, transformed variables, and minibatch training.
+
+Currently the best reference is the source code itself. The `examples` directory contains implementations of models including sparse matrix factorization, clustering (Gaussian mixture model), binary latent features, and variational autoencoders, among others. 
+
+# Custom components
+
+Elbow makes it easy to define new types of random variables. A new variable must extend the `ConditionalDistribution` class, specify its inputs, and provide methods for sampling and computing log probabilities. For example, let's implement a [Laplace distribution](https://en.wikipedia.org/wiki/Laplace_distribution) (like a Gaussian, but with longer tails):
+
+```
+from elbow import ConditionalDistribution
+from elbow.parameterization import unconstrained, positive_exp
+
+class Laplace(ConditionalDistribution):
+
+    def inputs(self):
+        return {"loc": unconstrained, "scale": positive_exp}
+
+    def _sample(self, loc, scale):
+        base = tf.random_uniform(shape=self.shape, dtype=tf.float32) - 0.5
+        std_laplace = tf.sign(base) * tf.log(1-2*tf.abs(base))
+        return loc + scale * std_laplace
+
+    def _logp(self, result, loc, scale):
+        return -tf.reduce_sum(tf.abs(result-loc)/scale - tf.log(2*scale))
+```
+
+In specifying the inputs, we also provide each one with a default parameterization: location is unconstrained, but scale must be positive, so we parameterize it as the exponential of an unconstrained Tensor. Other possibilities include `unit_interval`, `simplex_constrained`, and `psd_matrix`. These default parameterizations are used when an input is not specified and must be optimized over; typically this is the case when a distribution is used as a variational model. 
+
+Note that the sampling method generates samples by applying a transformation (in this case the inverse CDF) to a source of base randomness, so that the sampled values are differentiable with respect to the distribution parameters. This is the so-called "reparameterization trick", which allows Elbow to optimize a Monte Carlo approximation to the evidence lower bound (ELBO). Currently we assume all sampling methods are reparameterized in this way, though the alternative REINFORCE gradient estimator should be implemented in the future.
+
+To use our new distribution in variational models, we can also optionally implement an analytic entropy (if we did not do this, Elbo would default to the Monte Carlo entropy given by evaluating the log probability at a sampled value). We can also specify that the default variational model for a Laplace-distributed variable should itself be a Laplace distribution.
+
+```
+   def _entropy(self, loc, scale):
+       return 1 + tf.reduce_sum(tf.log(2*scale))
+
+   def default_q(self, **kwargs):
+       return Laplace(shape=self.shape, name="q_"+self.name)
+```
+
+We can now use our new variable type and compose it with other distributions:
+
+```
+mu = Laplace(loc=0, scale=10, name="mu")
+X = Gaussian(mean=mu, std=1, shape=(100,), name="X")
+
+m = Model(X)
+sampled = m.sample()
+X.observe(sampled[X])
+
+m.train(steps=500)
+posterior = m.posterior()
+print "sampled mu was %.2f; posterior has loc %.2f and scale %.2f" % (sampled["mu"], posterior["q_mu"]["scale"], posterior["q_mu"]["scale"])
+```
+
+
+
 
 
 

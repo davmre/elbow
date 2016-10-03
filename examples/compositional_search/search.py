@@ -5,7 +5,7 @@ import copy
 import bayesflow as bf
 import bayesflow.util as util
 
-from bayesflow.joint_model import Model
+from bayesflow.joint_model import Model, MovingAverageStopper
 
 from grammar import list_successors
 from models import build_model
@@ -14,6 +14,7 @@ from models import build_model
 class ExperimentSettings(object):
 
     def __init__(self):
+
         self.gaussian_auto_ard = True
         self.constant_gaussian_std = None
 
@@ -26,8 +27,9 @@ class ExperimentSettings(object):
         self.dirichlet_alpha = np.float32(1.0)
         self.max_rank = 6
 
-        self.adam_rate = 0.1
-        self.steps = 500
+        self.adam_rate = 0.02
+        self.stopping_rule = MovingAverageStopper(decay=0.999, eps=0.5,
+                                                  min_steps=1000)
         self.beamsize = 2
         self.p_stop_structure = 0.3
         self.n_elbo_samples = 50
@@ -50,25 +52,13 @@ def score_model(structure, X, settings):
     m = build_model(structure, (N, D), settings)
     m.observe(X)
 
-    elbo, sample_stochastic, decompose_elbo, inspect_posterior = construct_elbo(m)
+    jm = Model(m)
 
-    steps = settings.steps
-    try:
-        train_step = tf.train.AdamOptimizer(settings.adam_rate).minimize(-elbo)
-    except:
-        steps = 0
-        
-    init = tf.initialize_all_variables()
-    sess = tf.Session()
-    sess.run(init)
-    for i in range(steps):
-        fd = sample_stochastic()
-        sess.run(train_step, feed_dict = fd)
-        
-    score = monte_carlo_elbo(elbo, sess, sample_stochastic, n_samples=settings.n_elbo_samples)
+    jm.train(silent=True,
+             stopping_rule=settings.stopping_rule,
+             adam_rate=settings.adam_rate)
+    score = jm.monte_carlo_elbo(n_samples=settings.n_elbo_samples)
 
-    sess.close()
-    
     return score
 
 def initialize_from(old_model, new_model):
@@ -138,11 +128,9 @@ def main():
     #m = build_model(('chain', 'g'), (N, D), settings)
     X = m.sample()
     #X /= np.std(X)
-    
-
 
     best_structure = do_structure_search(X, settings)
 
-    
+
 if __name__ == "__main__":
     main()

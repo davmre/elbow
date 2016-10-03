@@ -27,3 +27,8 @@ def triangular_inv(L):
     invL = tf.matrix_triangular_solve(L, eye)
     return invL
 
+def broadcast_shape(**shapes):
+    result = None
+    xs = [np.empty(shape) for shape in shapes.values()]
+    return np.broadcast(*xs).shape
+    

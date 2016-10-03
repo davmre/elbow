@@ -16,6 +16,29 @@ def unconstrained(shape=None, init=None, name=None):
     val = tf.Variable(init, name=name)
     return val
 
+def unconstrained_zeros(shape=None, name=None):
+
+    shape = concrete_shape(shape)
+    init = np.float32(np.zeros(shape))
+        
+    val = tf.Variable(init, name=name)
+    return val
+
+def unconstrained_small(shape=None, name=None):
+    shape = concrete_shape(shape)
+    init = np.float32(np.random.randn(*shape) * 1e-6)
+    val = tf.Variable(init, name=name)
+    return val
+
+def unconstrained_scale(shape=None, name=None):
+    shape = concrete_shape(shape)
+    init = np.float32(np.random.randn(*shape))
+    
+    val = tf.Variable(init, name=name)
+    scale = tf.Variable(np.float32(1e-6), name=name)
+    return val * scale
+
+
 def simplex_constrained(shape=None, init_log=None, name=None):
 
     if init_log is None:

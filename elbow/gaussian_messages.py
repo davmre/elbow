@@ -2,9 +2,7 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
-import bayesflow.util as util
-
+import elbow.util as util
 
 class AbstractMVGaussian(object):
 

@@ -1,12 +1,12 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow.util as util
+import elbow.util as util
 
-from bayesflow.conditional_dist import ConditionalDistribution
-from bayesflow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
-from bayesflow.transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
-from bayesflow.elementary import Gaussian
+from elbow.conditional_dist import ConditionalDistribution
+from elbow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
+from elbow.transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
+from elbow.elementary import Gaussian
 
 import scipy.stats
 

@@ -1,8 +1,51 @@
 import tensorflow as tf
 import numpy as np
 
+from elbow import ConditionalDistribution
 from transforms import DeterministicTransform, Transform
 
+
+class PackRVs(ConditionalDistribution):
+
+    def __init__(self, *rvs, **kwargs):
+        self.n_rvs = len(rvs)
+        self.rv_keys = ["inp%03d" % i for i in range(self.n_rvs)]
+        inp_dict = {k: rv for (k, rv) in zip(self.rv_keys, rvs)}
+        kwargs.update(inp_dict)
+        super(PackRVs, self).__init__(**kwargs)
+
+    def inputs(self):
+        return {k: None for k in self.rv_keys}
+
+    def _compute_shape(self, **inp_shapes):
+        global_shape = None
+        for k, shape in inp_shapes.items():
+            # all variables should have the same shape outside of the first row
+            if global_shape is None:
+                global_shape = shape
+            else:
+                assert(shape == global_shape)
+
+        return (len(inp_shapes),) + global_shape
+
+    def _sample(self, **inputs):
+        sorted_inputs = [v for (k, v) in sorted(inputs.items())]
+        return tf.pack(sorted_inputs)
+
+    def _logp(self, result, **kwargs):
+        return tf.constant(0.0, dtype=tf.float32)
+
+    def default_q(self):
+        qs = [rv.q_distribution() for (k, rv) in sorted(self.inputs_random.items())]
+        return PackRVs(*qs)
+
+    def _inference_networks(self, q_result):
+        networks = {}
+        rvs = unpackRV(q_result)
+        networks = {k: n for (k, n) in zip(sorted(self.inputs_random.keys()), rvs)}
+            
+        return networks
+        
 def unpackRV(rv, axis=0):
     """
     Convert an RV of shape (N, :, :, ...) into N rvs of shape (:, :, ...)

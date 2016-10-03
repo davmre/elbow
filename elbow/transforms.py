@@ -1,10 +1,10 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
+
 import util
 
-from bayesflow.conditional_dist import ConditionalDistribution
+from conditional_dist import ConditionalDistribution
 
 class DeterministicTransform(ConditionalDistribution):
     """
@@ -437,3 +437,4 @@ class Simplex(Transform):
     def transform(cls, x, **kwargs):
         xmax = tf.reduce_max(x)
         return Simplex_Raw.transform(x-xmax, **kwargs)
+

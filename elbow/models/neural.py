@@ -1,13 +1,12 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
-import bayesflow.util as util
+import elbow.util as util
 
-from bayesflow.structure import unpackRV
+from elbow.structure import unpackRV
 
-from bayesflow.conditional_dist import ConditionalDistribution
-from bayesflow.elementary import Gaussian,BernoulliMatrix
+from elbow.conditional_dist import ConditionalDistribution
+from elbow.elementary import Gaussian,BernoulliMatrix
 
 def layer(inp, w, b):
     if len(inp.get_shape()) == 2:
@@ -31,9 +30,9 @@ def neural_gaussian(X, d_hidden, d_out, shape=None, **kwargs):
     shape = means.shape
     return Gaussian(mean=means, std=stds, shape=shape, name="Gaussian_"+encoder.name)
 
-def neural_bernoulli(X, d_hidden, d_out, shape=None, **kwargs):
+def neural_bernoulli(X, d_hidden, d_out, shape=None, local=False, **kwargs):
     encoder = NeuralBernoulliTransform(X, d_hidden, d_out, shape=shape, **kwargs)
-    return BernoulliMatrix(p=encoder, shape=shape)
+    return BernoulliMatrix(p=encoder, shape=shape, local=local)
 
 class NeuralGaussianTransform(ConditionalDistribution):
 

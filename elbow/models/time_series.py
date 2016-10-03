@@ -1,15 +1,14 @@
 import numpy as np
 import tensorflow as tf
 
-import bayesflow as bf
-import bayesflow.util as util
-from bayesflow import ConditionalDistribution
+import elbow.util as util
+from elbow import ConditionalDistribution
 
 import scipy.stats
 
-from bayesflow.gaussian_messages import MVGaussianMeanCov, reverse_message, forward_message
+from elbow.gaussian_messages import MVGaussianMeanCov, reverse_message, forward_message
 
-from bayesflow.parameterization import unconstrained, psd_matrix, psd_diagonal
+from elbow.parameterization import unconstrained, psd_matrix, psd_diagonal
 
 class LinearGaussian(ConditionalDistribution):
     
