@@ -1,6 +1,6 @@
 # Elbow
 
-Elbow is a flexible framework for probabilistic programming, built atop TensorFlow. The goal is to make it easy to define and compose sophisticated probability models and inference strategies. Currently the focus is on variational inference, in which we explicitly optimize a evidence bound (the ELBO) corresponding to the KL divergence between an approximate posterior representation and the true (unknown) posterior. Elbow supports the construction of sophisticated approximate posteriors, including [inference networks](https://arxiv.org/abs/1312.6114) and [structured message passing](https://arxiv.org/abs/1603.06277) as well as general-purpose [variational models](https://arxiv.org/abs/1511.02386) using the same model components as base-level models. 
+Elbow is a flexible framework for probabilistic programming, built atop TensorFlow. The goal is to make it easy to define and compose sophisticated probability models and inference strategies. Currently the focus is on variational inference, in which we explicitly optimize an evidence bound (the ELBO) corresponding to the KL divergence between an approximate posterior representation and the true (unknown) posterior. Elbow supports the construction of sophisticated approximate posteriors, including [inference networks](https://arxiv.org/abs/1312.6114) and [structured message passing](https://arxiv.org/abs/1603.06277) as well as general-purpose [variational models](https://arxiv.org/abs/1511.02386) using the same model components as base-level models. 
 
 # Usage
 
