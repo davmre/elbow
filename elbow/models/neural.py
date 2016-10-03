@@ -22,17 +22,17 @@ def init_zero_vector(shape):
     n_out = shape[0]
     return tf.Variable(tf.zeros((n_out,), dtype=tf.float32))
 
-def neural_gaussian(X, d_hidden, d_out, shape=None, **kwargs):
+def neural_gaussian(X, d_hidden, d_out, shape=None, name=None, **kwargs):
     augmented_shape = (2,) + shape if shape is not None else None
-    encoder = NeuralGaussianTransform(X, d_hidden, d_out, shape=augmented_shape, **kwargs)
+    encoder = NeuralGaussianTransform(X, d_hidden, d_out, shape=augmented_shape, name=None, **kwargs)
     means, stds = unpackRV(encoder)
 
     shape = means.shape
-    return Gaussian(mean=means, std=stds, shape=shape, name="Gaussian_"+encoder.name)
+    return Gaussian(mean=means, std=stds, shape=shape, name=name)
 
-def neural_bernoulli(X, d_hidden, d_out, shape=None, local=False, **kwargs):
+def neural_bernoulli(X, d_hidden, d_out, shape=None, local=False, name=None, **kwargs):
     encoder = NeuralBernoulliTransform(X, d_hidden, d_out, shape=shape, **kwargs)
-    return BernoulliMatrix(p=encoder, shape=shape, local=local)
+    return BernoulliMatrix(p=encoder, shape=shape, local=local, name=name)
 
 class NeuralGaussianTransform(ConditionalDistribution):
 

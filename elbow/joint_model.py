@@ -71,7 +71,7 @@ class Model(object):
             symmetry_correction = tf.reduce_sum(tf.pack([n._hack_symmetry_correction() for n in self.component_nodes]))
             
             self.elp = tf.reduce_sum(tf.pack(global_elps)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(local_elps))
-            self.entropy = tf.reduce_sum(tf.pack(global_entropies)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(global_entropies))
+            self.entropy = tf.reduce_sum(tf.pack(global_entropies)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(local_entropies))
 
             self.elbo = self.elp+self.entropy + symmetry_correction
 
@@ -79,10 +79,6 @@ class Model(object):
             return self.elbo, self.elp, self.entropy
         else:
             return self.elbo
-
-    #def build_variational_model(self):
-    #    explicit_qnodes = [node.q_distribution() for node in self.component_nodes]
-    #    return [node for node in ancestor_closure(explicit_qnodes) if node not in self.component_nodes]
 
     def build_variational_model(self):
         # start with nodes that already have attached Q distributions
@@ -166,8 +162,10 @@ class Model(object):
                 except Exception as e: # from fetching a placeholder
                     print e
                     continue
+            
             if len(d) > 0:
                 posterior_vals[node.name] = d
+                
         return posterior_vals
 
     def sample(self, seed=0):
@@ -221,7 +219,7 @@ class Model(object):
 
             elbo_val, elp_val, entropy_val = session.run((elbo, elp, entropy), feed_dict=fd)
             if print_s is not None and (time.time() - t) > print_s:
-                print "step %d elp %.2f entropy %.2f elbo %.2f" % (i, elbo_val, elp_val, entropy_val)
+                print "step %d elp %.2f entropy %.2f elbo %.2f" % (i, elp_val, entropy_val, elbo_val)
                 t = time.time()
                 
             i += 1
@@ -265,7 +263,7 @@ class StepCountStopper(object):
         
 class MovingAverageStopper(object):
 
-    def __init__(self, decay=0.98, eps=0.5, min_steps = 10):
+    def __init__(self, decay=0.99, eps=0.5, min_steps = 10):
         self.decay = decay
         self.eps=eps
         self.min_steps = min_steps
