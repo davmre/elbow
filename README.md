@@ -74,7 +74,7 @@ Each input is provided a default parameterization, to be used when optimizing ov
 
 Note that the sampling method generates samples by applying a transformation (in this case the inverse CDF) to a random source (uniform in this case), so that the sample is differentiable with respect to the location and scale parameters. This is the so-called "reparameterization trick", which allows us to optimize the parameters with respect to a a Monte Carlo approximation of the evidence lower bound (ELBO). Currently we assume all sampling methods are reparameterized in this way, though we plan to implement alternative gradient estimators (e.g., REINFORCE/BBVI) in the future.
 
-To use our new distribution in variational models, we can also optionally implement an analytic entropy (if we did not do this, Elbo would default to the Monte Carlo entropy given by evaluating the log probability at a sampled value). As a convenience we also hint that the default variational model for a Laplace-distributed variable should itself be a Laplace distribution.
+To use our new distribution in variational models, we can also optionally implement an analytic entropy (if we did not do this, Elbow would default to the Monte Carlo entropy given by evaluating the log probability at a sampled value). As a convenience we also hint that the default variational model for a Laplace-distributed variable should itself be a Laplace distribution.
 
 ```python
    def _entropy(self, loc, scale):
@@ -84,7 +84,7 @@ To use our new distribution in variational models, we can also optionally implem
        return Laplace(shape=self.shape, name="q_"+self.name)
 ```
 
-We can now use our new variable type and compose it with other distributions:
+We can now use our new variable type and compose it with other distributions. For example, we can redo the example from above, estimating the mean of a Gaussian, but now with a Laplace prior.
 
 ```python
 mu = Laplace(loc=0, scale=10, name="mu")
