@@ -262,7 +262,7 @@ class StepCountStopper(object):
         
 class MovingAverageStopper(object):
 
-    def __init__(self, decay=0.95, eps=0.5, min_steps = 10):
+    def __init__(self, decay=0.98, eps=0.5, min_steps = 10):
         self.decay = decay
         self.eps=eps
         self.min_steps = min_steps
