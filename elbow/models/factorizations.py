@@ -25,7 +25,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         derived = {}
         derived["mean"] = tf.matmul(A, tf.transpose(B))
         if self.rescale:
-            derived["mean"] /= self.K
+            derived["mean"] /= np.sqrt(self.K)
         derived["variance"] = std**2
         return derived
     
@@ -41,16 +41,17 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
 
         prod = tf.matmul(A, tf.transpose(B))
         if self.rescale:
-            prod /= float(self.K)
+            prod /= np.sqrt(self.K)
 
         return eps * std + prod
 
     def _logp(self, result, A, B, std):
         prod = tf.matmul(A, tf.transpose(B))
         if self.rescale:
-            prod = prod / self.K
+            prod = prod / np.sqrt(self.K)
         lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
         return lp
+
 
     def _expected_logp(self, q_result, q_A=None, q_B=None, q_std=None):
 
@@ -68,7 +69,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
             
         expected_result = tf.matmul(mA, tf.transpose(mB))
         if self.rescale:
-            expected_result = expected_result / self.K
+            expected_result = expected_result / np.sqrt(self.K)
         
         gaussian_lp = tf.reduce_sum(util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
 
@@ -84,14 +85,15 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         mAvB = tf.matmul(tf.square(mA), tf.transpose(vB))
         correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
         if self.rescale:
-            # rescaling the result is equivalent to rescaling each input by 1/sqrt(K),
-            # which scales the variances (and squared means) by 1/K.
-            # Which then scales each of the product terms vAvB, vAmB, etc by 1/K^2. 
-            correction = correction / (self.K * self.K)
+            # rescaling the result is equivalent to rescaling each input by K^{-1/4},
+            # which scales the variances (and squared means) by 1/sqrt(K).
+            # Which then scales each of the product terms vAvB, vAmB, etc by 1/K. 
+            correction = correction / (self.K)
         
         expected_lp = gaussian_lp - .5 * correction
         
         return expected_lp
+
 
     def default_q(self):
         if "A" in self.inputs_random:
@@ -144,7 +146,7 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
         prod = tf.reduce_sum(Aidx * Bidx, 1)
 
         if self.rescale:
-            prod = prod / self.K
+            prod = prod / np.sqrt(self.K)
         
         derived["mean"] = prod
         derived["variance"] = std**2
@@ -168,7 +170,7 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
         prod = tf.reduce_sum(Aidx * Bidx, 1)
         
         if self.rescale:
-            prod /= float(self.K)
+            prod /= np.sqrt(self.K)
 
         return eps * std + prod
 
@@ -178,7 +180,7 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
         Bidx = tf.gather(B, col_idxs)
         prod = tf.reduce_sum(Aidx * Bidx, 1)
         if self.rescale:
-            prod = prod / self.K
+            prod = prod / np.sqrt(self.K)
         lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
         return lp
 
@@ -201,7 +203,7 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
             
         expected_result = tf.reduce_sum(mA * mB, 1)
         if self.rescale:
-            expected_result = expected_result / self.K
+            expected_result = expected_result / np.sqrt(self.K)
         
         gaussian_lp = tf.reduce_sum(util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
 
@@ -213,7 +215,7 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
             # rescaling the result is equivalent to rescaling each input by 1/sqrt(K),
             # which scales the variances (and squared means) by 1/K.
             # Which then scales each of the product terms vAvB, vAmB, etc by 1/K^2. 
-            correction = correction / (self.K * self.K)
+            correction = correction / (self.K)
         
         expected_lp = gaussian_lp - .5 * correction
         
