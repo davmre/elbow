@@ -169,7 +169,10 @@ class ConditionalDistribution(object):
 
     def inference_networks(self):
         assert(self._q_distribution is not None)
-        return self._inference_networks(q_result = self._q_distribution)
+        if self.local:
+            return self._inference_networks(q_result = self._q_distribution)
+        else:
+            return {}
     
     def _inference_networks(self, q_result):
         return {}
@@ -200,9 +203,9 @@ class ConditionalDistribution(object):
 
         return self._q_distribution
 
-    def attach_q(self, q_distribution):
+    def attach_q(self, q_distribution, replace_existing=False):
 
-        if self._q_distribution is not None:
+        if self._q_distribution is not None and not replace_existing:
             raise Exception("trying to attach Q distribution %s at %s, but another distribution %s is already attached!" % (self._q_distribution, self, self._q_distribution))
 
         #print "attaching", q_distribution, "at", self
@@ -210,19 +213,24 @@ class ConditionalDistribution(object):
         assert(self.shape == q_distribution.shape)
         q_distribution.local = self.local
         self._q_distribution = q_distribution
-                                        
-    def observe(self, observed_val):
+
+    def attach_map_q(self, replace_existing=False):
+        q_dist = WrapperNode(name="q_" + self.name, shape=self.shape)
+        self.attach_q(q_dist, replace_existing=replace_existing)
+        return q_dist
+        
+    def observe(self, observed_val, replace_existing=False):
         tf_value = tf.convert_to_tensor(observed_val)
         q_dist = WrapperNode(tf_value, name="observed_" + self.name)
-        self.attach_q(q_dist)
+        self.attach_q(q_dist, replace_existing=replace_existing)
         return q_dist
 
-    def observe_placeholder(self):
+    def observe_placeholder(self, replace_existing=False):
         tf_value = tf.placeholder(shape=self.shape, dtype=self.dtype)
         q_dist = WrapperNode(tf_value, name="observed_" + self.name)
-        self.attach_q(q_dist)
+        self.attach_q(q_dist, replace_existing=replace_existing)
         return tf_value
-        
+
     def __str__(self):
         return repr(self)
 
