@@ -37,7 +37,11 @@ class PackRVs(DeterministicTransform):
         networks = {k: n for (k, n) in zip(sorted(self.inputs_random.keys()), rvs)}
             
         return networks
-        
+
+    def default_q(self):
+        qs = [rv.q_distribution() for (k, rv) in sorted(self.inputs_random.items())]
+        return PackRVs(*qs, name="q_" + self.name)
+    
 def unpackRV(rv, axis=0):
     """
     Convert an RV of shape (N, :, :, ...) into N rvs of shape (:, :, ...)

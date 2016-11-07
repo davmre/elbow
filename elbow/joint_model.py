@@ -5,6 +5,7 @@ import uuid
 import copy
 import time
 
+from transforms import DeterministicTransform
 from conditional_dist import ConditionalDistribution, WrapperNode
 
 def ancestors(node):

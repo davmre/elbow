@@ -10,6 +10,39 @@ from transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
 
 import scipy.stats
 
+class ContinuousUniform(ConditionalDistribution):
+    """
+    Represents a uniform distribution on an axis-aligned region in R^n. 
+
+    Note this class does not perform bound checking (i.e., return
+    logp=-inf outside the region) because this creates weird behavior
+    with Gaussian approximating distributions, which always place
+    *some* mass outside of the bounds. This could be fixed by
+    implementing a truncated Gaussian posterior approximation.
+
+    """
+    
+    def __init__(self, min_range, max_range, **kwargs):
+        super(ContinuousUniform, self).__init__(min_range=min_range, max_range=max_range, **kwargs)
+
+    def inputs(self):
+        return {"min_range": None, "max_range": None}
+
+    def _compute_shape(self, min_range_shape, max_range_shape, **kwargs):
+        assert min_range_shape == max_range_shape
+        return min_range_shape
+
+    def _sample(self, min_range, max_range):
+        return tf.random_uniform(shape=self.shape) * (max_range - min_range) + min_range
+
+    def _logp(self, result, min_range, max_range):
+        log_area = tf.reduce_sum(tf.log(max_range - min_range))
+        return -log_area 
+
+    def default_q(self):
+        # TODO should implement a truncated Gaussian Q dist
+        return Gaussian(shape=self.shape, name="q_"+self.name)
+
 class GammaMatrix(ConditionalDistribution):
     
     def __init__(self, alpha, beta, **kwargs):
