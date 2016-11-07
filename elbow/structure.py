@@ -2,10 +2,9 @@ import tensorflow as tf
 import numpy as np
 
 from elbow import ConditionalDistribution
-from transforms import DeterministicTransform, Transform
+from transforms import DeterministicTransform, UnaryTransform, Transform
 
-
-class PackRVs(ConditionalDistribution):
+class PackRVs(DeterministicTransform):
 
     def __init__(self, *rvs, **kwargs):
         self.n_rvs = len(rvs)
@@ -32,13 +31,6 @@ class PackRVs(ConditionalDistribution):
         sorted_inputs = [v for (k, v) in sorted(inputs.items())]
         return tf.pack(sorted_inputs)
 
-    def _logp(self, result, **kwargs):
-        return tf.constant(0.0, dtype=tf.float32)
-
-    def default_q(self):
-        qs = [rv.q_distribution() for (k, rv) in sorted(self.inputs_random.items())]
-        return PackRVs(*qs)
-
     def _inference_networks(self, q_result):
         networks = {}
         rvs = unpackRV(q_result)
@@ -57,7 +49,7 @@ def unpackRV(rv, axis=0):
     transformedRVs = []
     for output in range(noutputs):
         transform = unpack_transform(idx=output, axis=axis)
-        transformedRVs.append(DeterministicTransform(rv, transform))
+        transformedRVs.append(UnaryTransform(rv, transform))
         
     return transformedRVs
 
@@ -94,8 +86,8 @@ def split_at_row(rv, row_idx):
     t1 = slice_transform((0,0), (row_idx, m))
     t2 = slice_transform( (row_idx, 0), (n-row_idx, m))
     
-    rv1 = DeterministicTransform(rv, t1)
-    rv2 = DeterministicTransform(rv, t2)
+    rv1 = UnaryTransform(rv, t1)
+    rv2 = UnaryTransform(rv, t2)
     return rv1, rv2
 
 def slice_transform(begin, size):

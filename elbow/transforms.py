@@ -6,7 +6,35 @@ import util
 
 from conditional_dist import ConditionalDistribution
 
+
 class DeterministicTransform(ConditionalDistribution):
+    """
+    Generic superclass for deterministic transforms.
+    """
+    
+    def _logp(self, result, *args, **kwargs):
+        return tf.constant(0.0, dtype=tf.float32)
+
+    def _entropy(self, *args, **kwargs):
+        return tf.constant(0.0, dtype=tf.float32)
+        
+    def attach_q(self, qdist):
+        raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
+
+    def observe(self, observed_val):
+        raise Exception("cannot explicitly observe a deterministic transformed value. ")
+    
+    def default_q(self, **kwargs):
+        """
+        Automatically construct a Q distribution as a deterministic transform of parent Qs.
+        """
+        qs = {inp : n.q_distribution() for (inp, n) in self.inputs_random.items()}
+        qs.update(self.inputs_nonrandom)
+        qs.update(kwargs)
+        return type(self)(name="q_"+self.name, **qs)
+    
+
+class UnaryTransform(DeterministicTransform):
     """
     Define a random variable as the deterministic transform of another RV 
     already present in the model. Variables of this type are treated as a 
@@ -18,7 +46,7 @@ class DeterministicTransform(ConditionalDistribution):
     def __init__(self, A, transform, **kwargs):
         self.transform=transform
         assert(isinstance(A, ConditionalDistribution))
-        super(DeterministicTransform, self).__init__(A=A, **kwargs)
+        super(UnaryTransform, self).__init__(A=A, **kwargs)
 
         if transform.is_structural():
             # pass through transformed elementwise params
@@ -53,28 +81,18 @@ class DeterministicTransform(ConditionalDistribution):
     def _compute_dtype(self, A_dtype):
         return A_dtype
     
-    def _logp(self, result, A):
-        return tf.constant(0.0, dtype=tf.float32)
-
-    def _entropy(self, A):
-        return tf.constant(0.0, dtype=tf.float32)
-        
-    def attach_q(self, qdist):
-        raise Exception("cannot attach an explicit Q distribution to a deterministic transform. attach to the parent instead!")
-
     def observe(self, observed_val):
         transformed = self.transform.inverse(observed_val)
         self.inputs_random["A"].observe(transformed)
-    
+
     def default_q(self):
         q_A = self.inputs_random["A"].q_distribution()    
-        return DeterministicTransform(q_A, self.transform, name="q_"+self.name)
+        return UnaryTransform(q_A, self.transform, name="q_"+self.name)
 
     def is_gaussian(self):
         return self.transform.is_structural() and self.A.is_gaussian()
 
 
-    
 class TransformedDistribution(ConditionalDistribution):
 
     """

@@ -3,7 +3,7 @@ import tensorflow as tf
 
 from elbow.joint_model import Model
 from elbow.elementary import Gaussian, BernoulliMatrix, BetaMatrix, DirichletMatrix
-from elbow.transforms import DeterministicTransform, Exp
+from elbow.transforms import UnaryTransform, Exp
 from elbow.models.neural import neural_gaussian, neural_bernoulli
 from elbow.models.factorizations import *
 """
@@ -87,7 +87,7 @@ def latent_feature_model():
 
 def sparsity():
     G1 = Gaussian(mean=0, std=1.0, shape=(100,10), name="G1")
-    expG1 = DeterministicTransform(G1, Exp, name="expG1")
+    expG1 = UnaryTransform(G1, Exp, name="expG1")
     X = MultiplicativeGaussianNoise(expG1, 1.0, name="X")
 
     sampled_X = X.sample(seed=0)

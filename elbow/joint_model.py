@@ -6,7 +6,6 @@ import copy
 import time
 
 from conditional_dist import ConditionalDistribution, WrapperNode
-from transforms import DeterministicTransform
 
 def ancestors(node):
     return set([node,] + [ancestor_node for inp in node.inputs_random.values() for ancestor_node in ancestors(inp)])
@@ -78,8 +77,8 @@ class Model(object):
         if return_all:
             return self.elbo, self.elp, self.entropy
         else:
-            return self.elbo
-
+            return self.elbo        
+        
     def build_variational_model(self):
         # start with nodes that already have attached Q distributions
         attached = [n for n in self.component_nodes if n._q_distribution is not None]
@@ -114,6 +113,17 @@ class Model(object):
         if self.variational_nodes is None:
             self.variational_nodes = self.build_variational_model()
         return self.variational_nodes
+
+
+    def full_map_inference(self):
+        # attach MAP (delta fn) Q distributions to every node in the model
+        for n in self.component_nodes:
+            if n._q_distribution is not None:
+                print "WARNING: %s already has attached Q distribution %s" % (n, n._q_distribution)
+                continue
+
+            if not isinstance(n, DeterministicTransform):
+                n.attach_map_q()
     
     def elbo_terms(self):
         elps = {n.name: n.expected_logp() for n in self.component_nodes}

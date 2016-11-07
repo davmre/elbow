@@ -60,6 +60,9 @@ def main():
     sampled = jm.sample()
     jm["C"].observe(sampled["C"])
 
+    mean_abs_err = np.mean(np.abs(sampled["C"]))
+    print "baseline (all zeroes) reconstructs observations with mean deviation %.3f" % (mean_abs_err)
+    
     """
     Reconstruction err for true latent traits.
     """

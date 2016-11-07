@@ -6,7 +6,7 @@ import elbow.util as util
 from elbow.elementary import Gaussian, BernoulliMatrix, GammaMatrix, BetaMatrix, DirichletMatrix
 from elbow.joint_model import Model, BatchGenerator
 from elbow.models.factorizations import *
-from elbow.transforms import DeterministicTransform, TransformedDistribution, Exp
+from elbow.transforms import UnaryTransform, TransformedDistribution, Exp
 import elbow.transforms as transforms
 
 from grammar import list_structures
@@ -22,7 +22,7 @@ def build_column_stds(shape, settings, name):
                                      dtype=np.float32, name="%s_logstd_mean" % name)
         logstd_logstd = Gaussian(mean=0.0, std=1.0, shape=(1,),
                                        dtype=np.float32, name="%s_logstd_logstd" % name)
-        logstd_std = DeterministicTransform(logstd_logstd, transforms.Exp,
+        logstd_std = UnaryTransform(logstd_logstd, transforms.Exp,
                                             name="%s_logstd_std" % name)
 
 
@@ -31,7 +31,7 @@ def build_column_stds(shape, settings, name):
         # specializes to the case where all column variances are the same
         logstd = Gaussian(mean=logstd_mean, std=logstd_std, shape=(prec_dim,),
                                 dtype=np.float32, name="%s_logstd" % name)
-        std = DeterministicTransform(logstd, transforms.Exp,
+        std = UnaryTransform(logstd, transforms.Exp,
                                      name="%s_std" % name)
     else:
         std = settings.constant_gaussian_std
@@ -58,7 +58,7 @@ def build_bernoulli(shape, settings, name, local=False):
     return B
 
 def build_transpose(A, name):
-    return DeterministicTransform(A, transforms.Transpose, name=name)
+    return UnaryTransform(A, transforms.Transpose, name=name)
 
 def build_noise_std(settings, name):
     if settings.constant_noise_std is not None:
@@ -68,7 +68,7 @@ def build_noise_std(settings, name):
         beta = settings.noise_prec_beta
         noiseprec = GammaMatrix(alpha=alpha, beta=beta, shape=(1,),
                                 dtype=np.float32, name="%s_noise_precs" % name)
-        noisestd = DeterministicTransform(noiseprec, transforms.Reciprocal_Sqrt,
+        noisestd = UnaryTransform(noiseprec, transforms.Reciprocal_Sqrt,
                                           name="%s_noise_std" % name)
                 
     return noisestd
@@ -76,16 +76,16 @@ def build_noise_std(settings, name):
 def build_lowrank(G1, G2, settings, name, local=False):
     noise_std = build_noise_std(settings, name)
 
-    #if not isinstance(G1, DeterministicTransform):
+    #if not isinstance(G1, UnaryTransform):
     #    G1.attach_q(Gaussian(shape=G1.shape))
-    #if not isinstance(G2, DeterministicTransform):
+    #if not isinstance(G2, UnaryTransform):
     #    G2.attach_q(Gaussian(shape=G2.shape))
     
     return NoisyGaussianMatrixProduct(G1, G2, noise_std, name=name, local=local)
 
 def build_features(B, G, settings, name, local=False):
     noise_std = build_noise_std(settings, name)
-    #if not isinstance(G, DeterministicTransform):
+    #if not isinstance(G, UnaryTransform):
     #    G.attach_q(Gaussian(shape=G.shape))
 
     return NoisyLatentFeatures(B, G, noise_std, name=name, local=local)
@@ -93,7 +93,7 @@ def build_features(B, G, settings, name, local=False):
 def build_chain(G, settings, name, local=False):
     noise_std = build_noise_std(settings, name)
 
-    #if not isinstance(G, DeterministicTransform):
+    #if not isinstance(G, UnaryTransform):
     #    G.attach_q(Gaussian(shape=G.shape))
 
     C = NoisyCumulativeSum(G, noise_std, name=name, local=local)
@@ -101,10 +101,10 @@ def build_chain(G, settings, name, local=False):
     return C
 
 def build_sparsity(G, settings, name, local=False):
-    #if not isinstance(G, DeterministicTransform):
+    #if not isinstance(G, UnaryTransform):
     #    G.attach_q(Gaussian(shape=G.shape))
 
-    expG = DeterministicTransform(G, Exp, name="%s_exp" % name)
+    expG = UnaryTransform(G, Exp, name="%s_exp" % name)
     stds = build_column_stds(G.shape, settings, name)
     return MultiplicativeGaussianNoise(expG, stds, name=name, local=local)
 
@@ -113,7 +113,7 @@ def build_clustering(centers, shape, settings, name, local=False):
     K, D2 = centers.shape
     assert(D==D2)
 
-    #if not isinstance(centers, DeterministicTransform):
+    #if not isinstance(centers, UnaryTransform):
     #    centers.attach_q(Gaussian(shape=centers.shape))
 
     weights = DirichletMatrix(alpha=settings.dirichlet_alpha,

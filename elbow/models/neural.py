@@ -6,6 +6,7 @@ import elbow.util as util
 from elbow.structure import unpackRV
 
 from elbow.conditional_dist import ConditionalDistribution
+from elbow.transforms import DeterministicTransform
 from elbow.elementary import Gaussian,BernoulliMatrix
 
 def layer(inp, w, b):
@@ -34,7 +35,7 @@ def neural_bernoulli(X, d_hidden, d_out, shape=None, local=False, name=None, **k
     encoder = NeuralBernoulliTransform(X, d_hidden, d_out, shape=shape, **kwargs)
     return BernoulliMatrix(p=encoder, shape=shape, local=local, name=name)
 
-class NeuralGaussianTransform(ConditionalDistribution):
+class NeuralGaussianTransform(DeterministicTransform):
 
     def __init__(self, X, d_hidden, d_z, w3=None, w4=None, w5=None, b3=None, b4=None, b5=None, **kwargs):
 
@@ -70,20 +71,10 @@ class NeuralGaussianTransform(ConditionalDistribution):
         std = tf.exp(layer(h1, w5, b5))
         return tf.pack([mean, std])
 
-    def _logp(self, result, **kwargs):
-        return tf.constant(0.0, dtype=tf.float32)
-
-    def _entropy(self, **kwargs):
-        return tf.constant(0.0, dtype=tf.float32)
-
-    """
     def default_q(self):
-        input_qs = {inp: node.q_distribution() for (inp, node) in self.inputs_random.items()}
-        input_qs.update(self.inputs_nonrandom)
-        return NeuralGaussianTransform(name="q_"+self.name, d_hidden=self.d_hidden, d_z=self.d_z, **input_qs)
-    """
+        return super(NeuralGaussianTransform, self).default_q(d_hidden=self.d_hidden, d_z=self.d_z)
     
-class NeuralBernoulliTransform(ConditionalDistribution):
+class NeuralBernoulliTransform(DeterministicTransform):
     def __init__(self, z, d_hidden, d_x, w1=None, w2=None, b1=None, b2=None, **kwargs):
 
         z_shape = util.extract_shape(z) if isinstance(z, tf.Tensor) else z.shape 
@@ -117,14 +108,5 @@ class NeuralBernoulliTransform(ConditionalDistribution):
         probs = tf.nn.sigmoid(layer(h1, w2, b2))
         return probs
 
-    def _logp(self, result, **kwargs):
-        return tf.constant(0.0, dtype=tf.float32)
-
-    def _entropy(self, **kwargs):
-        return tf.constant(0.0, dtype=tf.float32)
-
     def default_q(self):
-        input_qs = {inp: node.q_distribution() for (inp, node) in self.inputs_random.items()}
-        input_qs.update(self.inputs_nonrandom)
-        return NeuralBernoulliTransform(name="q_"+self.name, d_hidden=self.d_hidden, d_x=self.d_x, **input_qs)
-
+        return super(NeuralBernoulliTransform, self).default_q(d_hidden=self.d_hidden, d_x=self.d_x)
