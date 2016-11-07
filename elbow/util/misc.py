@@ -32,3 +32,14 @@ def broadcast_shape(**shapes):
     xs = [np.empty(shape) for shape in shapes.values()]
     return np.broadcast(*xs).shape
     
+
+def differentiable_sq_singular_vals(A):
+    # the standard tensorflow SVD repr isn't differentiable,
+    # but if we fix the rotation we can get an approximate
+    # derivative
+    d, u, v = tf.svd(A)
+    vv = tf.stop_gradient(v)
+    ud = tf.matmul(A, vv)
+    
+    dd = tf.reduce_sum(tf.square(ud), 0)
+    return dd

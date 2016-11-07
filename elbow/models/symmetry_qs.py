@@ -173,99 +173,13 @@ class SignFlipGaussian(Gaussian):
         return tf.add_n(trait_entropies)
 
 
-class SingleSignFlipGaussian(Gaussian):
-
-    def __init__(self, deg=10, **kwargs):
-        self.deg = deg
-        self.x, self.w = np.polynomial.hermite.hermgauss(deg)
-
-        super(SingleSignFlipGaussian, self).__init__(**kwargs)
-    
-    def _entropy(self, mean, std, **kwargs):
-        n, k = self.shape
-
-        m = mean
-        v = std**2
-
-        entropy = util.dists.gaussian_entropy(variance=v)
-
-        # now compute the approximate correction
-
-        # compute alpha2 = mu^T Sigma^-1 mu for the multivariate Gaussian with 
-        # mu = [m]
-        # Sigma  = diag([v])
-        alpha2 = tf.reduce_sum(tf.square(m) / v) 
-
-        alpha2 = tf.clip_by_value(alpha2, 1e-10, 1e8)
-
-        # y ~ N(mean=alpha2, var=alpha2) are the Monte Carlo
-        # "variables", except here we construct them from
-        # the deterministic quadrature points x
-        y = tf.mul(tf.sqrt(alpha2),self.x) + alpha2
-        fs = -tf.log(.5*(1 + tf.exp(-2*y)))
-
-        # gauss-hermite quadrature is for integrals wrt e(-x^2); 
-        # adapting this to a Gaussian density requires a change of
-        # variables introducing a 1/sqrt(pi) factor. 
-        correction = tf.reduce_sum(tf.mul(fs, self.w)) / np.sqrt(np.pi)
-
-        return entropy + correction
+class GaussianMonteCarlo(Gaussian):
+    def _entropy(self, *args, **kwargs):
+        return -self._parameterized_logp(*args, result=self._sampled, **kwargs)
 
 
-class ExplicitRotationMixture(Gaussian):
-
-    def __init__(self, nthetas=41, invert_at=None, **kwargs):
-        self.thetas = np.linspace(0, 2*np.pi, nthetas)
-        self.invert_at = invert_at
-        def rotation_matrix(theta):
-            return np.float32(np.array(((np.cos(theta), -np.sin(theta)), (np.sin(theta), np.cos(theta)))).reshape((2, 2)))
-
-        self.transforms = [tf.constant(rotation_matrix(theta)) for theta in self.thetas]
-        
-        super(ExplicitRotationMixture, self).__init__(**kwargs)
-
-    def _entropy(self, mean, std, **kwargs):
-        return -self._parameterized_logp(result=self._sampled, **kwargs)
-
-    def _logp(self, result, mean, std, **kwargs):
-
-        n, k = self.shape
-        assert(k == 2)
-
-        lps = []
-        if self.invert_at is not None:
-            rows = tf.unpack(result)
-            result_A = tf.pack(rows[:self.invert_at])
-            result_B = tf.pack(rows[self.invert_at:])
-            resultsA = [tf.matmul(result_A, transform) for transform in self.transforms]
-            resultsB = [tf.matmul(result_B, transform) for transform in self.transforms[::-1]]
-
-            for rA, rB in zip(resultsA, resultsB):
-                r = tf.concat(0, (rA, rB))
-                lp1 = tf.reduce_sum(util.dists.gaussian_log_density(r, mean=mean, stddev=std))
-                lp2 = tf.reduce_sum(util.dists.gaussian_log_density(-r, mean=mean, stddev=std))
-                lps.append(lp1)
-                lps.append(lp2)
-
-        else:
-            results = [tf.matmul(result, transform) for transform in self.transforms]
-            for r in results:
-                lp1 = tf.reduce_sum(util.dists.gaussian_log_density(r, mean=mean, stddev=std))
-                lp2 = tf.reduce_sum(util.dists.gaussian_log_density(-r, mean=mean, stddev=std))
-                lps.append(lp1)
-                lps.append(lp2)
-
-            
-        lps = tf.pack(lps)
-        self.lps = lps
-        max_lp  = tf.reduce_max(lps)
-        lp = tf.log(tf.reduce_mean(tf.exp(lps - max_lp))) + max_lp
-        
-        return lp
-            
-        
 class ExplicitPermutationMixture(Gaussian):
-
+    
     def __init__(self, deg=10, **kwargs):
         super(ExplicitPermutationMixture, self).__init__(**kwargs)
 
@@ -303,43 +217,53 @@ class ExplicitPermutationMixture(Gaussian):
         lp = tf.log(tf.reduce_mean(tf.exp(component_lps - max_lp))) + max_lp
         return lp
 
-class ExplicitPermutationSignflipMixture(Gaussian):
 
-    def __init__(self, deg=10, **kwargs):
-        super(ExplicitPermutationSignflipMixture, self).__init__(**kwargs)
+def lpbessel_svs(xs, n):
+    # compute a Laplace approximation (Butler & Wood, 2002)
+    # to the matrix-argument Bessel function
+    #   int_T exp( UT ) V(dT)
+    # for a matrix U with V(dT) representing 
+    # Haar measure on the orthogonal group T \in O(n)
+    #
+    # xs: singular values of U'U
 
+    def r(u):
+        return u/(tf.sqrt(tf.square(u) + 1.0) + 1.0)
+    
+    us = 2.0*xs / n
+    ys = r(us)
+    y2 = tf.square(ys)
+    y2r = tf.reshape(y2, (n, 1))
+    y2pairs = tf.matmul( y2r, tf.transpose(y2r))
+    log_denom = .5 * tf.reduce_sum(tf.log(1-y2pairs))
+    log_num = tf.reduce_sum(xs*ys + n/2.0 * tf.log((1-y2)))
+    return log_num - log_denom
+
+class DiagonalRotationMixture(Gaussian):
+    """
+    posterior approximation for an elementwise matrix Gaussian
+    density symmetrized with respect to the orthogonal group O(n)
+    acting in the column space.
+    
+    Currently assumes covariance is isotropic. This can be enforced by constructing
+      std = tf.tile( tf.exp(tf.Variable(np.asarray(-2).reshape(1,1), dtype=tf.float32)), (n,k))
+      qdist = DiagonalRotationMixture(..., shape=(n, k), std=std)
+    where the std is a scalar tiled to the full shape (n,k).
+    """    
+
+    def __init__(self, **kwargs):
+        super(DiagonalRotationMixture, self).__init__(**kwargs)
+        
     def _entropy(self, mean, std, **kwargs):
         return -self._parameterized_logp(result=self._sampled, **kwargs)
 
     def _logp(self, result, mean, std, **kwargs):
-        import itertools
-        
+
         n, k = self.shape
-        col_means = tf.unpack(mean, axis=1)
-        col_stds = tf.unpack(std, axis=1)
-
-        components = zip(col_means, col_stds)
-
-        signflips = itertools.product(*[(-1, 1) for i in range(k)])
-        signflips_tf = [tf.constant(np.float32(f)) for f in signflips]
+        base_logp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=mean, stddev=std))
+        cxu = tf.matmul(tf.transpose(result/std), mean/std)
+        svs = tf.sqrt(util.differentiable_sq_singular_vals(cxu))    
+        lb = lpbessel_svs(svs, k)
+        lp = base_logp + lb - tf.trace(cxu)
         
-        component_lps = []
-        for perm in itertools.permutations(components):
-            perm_means, perm_stds = zip(*perm)
-            perm_mean = tf.pack(perm_means, axis=1)
-            perm_std = tf.pack(perm_stds, axis=1)
-
-            for flip in signflips_tf:
-                # 1 or -1 for each column
-                flipped_mean = perm_mean*flip
-
-                lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=flipped_mean, stddev=perm_std))
-                component_lps.append(lp)
-
-        component_lps = tf.pack(component_lps)
-
-        self.component_lps = component_lps
-        
-        max_lp  = tf.reduce_max(component_lps)
-        lp = tf.log(tf.reduce_mean(tf.exp(component_lps - max_lp))) + max_lp
         return lp
