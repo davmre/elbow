@@ -4,9 +4,8 @@ import tensorflow as tf
 import util
 
 from conditional_dist import ConditionalDistribution
-from parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
-from transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
-
+from parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval, psd_matrix_small, psd_diagonal
+from transforms import Logit, Simplex1, Simplex, Exp, TransformedDistribution, RowNormalize
 
 import scipy.stats
 
@@ -106,7 +105,7 @@ class DirichletMatrix(ConditionalDistribution):
     
     def __init__(self, alpha, **kwargs):
         super(DirichletMatrix, self).__init__(alpha=alpha, **kwargs)
-        self.K = self.shape[0]
+        self.N, self.K = self.shape
         
     def inputs(self):
         return {"alpha": positive_exp}
@@ -114,10 +113,10 @@ class DirichletMatrix(ConditionalDistribution):
     def _sample(self, alpha):
 
         # broadcast alpha from scalar to vector, if necessary
-        alpha = alpha * tf.ones(shape=(self.shape[0]), dtype=self.dtype)
+        alpha = alpha * tf.ones(shape=self.shape, dtype=self.dtype)
 
         gammas = tf.squeeze(tf.random_gamma(shape=(1,), alpha=alpha, beta=1))
-        sample = Normalize.transform(gammas)
+        sample = RowNormalize.transform(gammas)
         return sample
 
     def _logp(self, result, alpha):    
@@ -128,9 +127,19 @@ class DirichletMatrix(ConditionalDistribution):
         return alpha_shape
         
     def default_q(self, **kwargs):
-        q1 = Gaussian(shape=self.shape)
+        n, k = self.shape
+
+        # TODO: should we prefer Simplex or Simplex1 transformation?
+        # preliminarily: Simplex1 seems to yield degenerate
+        # posteriors, can't represent some natural distributions on
+        # the simplex. not entirely sure why.
+        
+        #q1 = Gaussian(shape=(n, k-1))
+        #return TransformedDistribution(q1, Simplex1, name="q_"+self.name)
+
+        q1 = Gaussian(shape=(n, k))
         return TransformedDistribution(q1, Simplex, name="q_"+self.name)
-    
+        
     def reparameterized(self):
         return False
     
@@ -243,7 +252,51 @@ class Laplace(ConditionalDistribution):
     def default_q(self, **kwargs):
         return Laplace(shape=self.shape, name="q_"+self.name)
 
+
+class MVGaussian(ConditionalDistribution):
+
+    def __init__(self, mean=None, cov=None, **kwargs):
+        super(MVGaussian, self).__init__(mean=mean, cov=cov, **kwargs) 
+
+    def inputs(self):
+        return {"mean": unconstrained, "cov": psd_diagonal}
+
+    def _input_shape(self, param, **kwargs):
+        if param=="mean":
+            return self.shape
+        elif param=="cov":
+            n, k = self.shape
+            return (n, n)
+        else:
+            raise Exception("unrecognized param %s" % param)
+
     
+    def outputs(self):
+        return ("out",)
+
+    def _sample(self, mean, cov):
+        L = tf.cholesky(cov)
+        eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
+        return tf.matmul(L, eps) + mean
+    
+    def _logp(self, result, mean, cov):
+        lp = multivariate_gaussian_log_density(result, mu=mean, Sigma=cov)
+        return lp
+
+    def _entropy(self, cov, **kwargs):
+        return util.dists.multivariate_gaussian_entropy(Sigma=cov)
+    
+    def _sample_and_entropy(self, mean, cov, **kwargs):
+        L = tf.cholesky(cov)
+        eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
+        sample = tf.matmul(L, eps) + mean
+        entropy = util.dists.multivariate_gaussian_entropy(L=L)
+        return sample, entropy
+    
+    def reparameterized(self):
+        return True
+
+
 def is_gaussian(dist):
     """
     Convenience method to identify Gaussian distributions via duck typing
@@ -279,7 +332,7 @@ class Gaussian(ConditionalDistribution):
         return lp
 
     def _entropy(self, std, **kwargs):
-        variance = std**2
+        variance = tf.ones(self.shape) * std**2
         return tf.reduce_sum(util.dists.gaussian_entropy(variance=variance))
 
     def default_q(self, **kwargs):

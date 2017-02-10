@@ -235,23 +235,26 @@ def gamma_log_density(x, alpha, beta, parameterization=None):
 
 def dirichlet_log_density(x, alpha, clip_finite=True):
     """
-    Assumes that x is a vector, and alpha is a vector of the same length. 
+    Assumes that x is either a vector or a right-stochastic matrix (i.e., each row is a probability dist), and alpha is broadcastable to the same shape as x. 
 
     WARNING: does not enforce sum(x)==1; bad things will happen if this is violated. 
 
     """
 
+    if len(x.get_shape()) == 1:
+        x = tf.reshape(x, (1, -1))
+    
     if clip_finite:
         logx = tf.log(tf.clip_by_value(x, 1e-37, 1.0), name="dirichlet_logx")
     else:
         logx = tf.log(x, name="dirichlet_logx")
-
+        
     # force broadcasting alpha 
     if alpha.get_shape() != x.get_shape():
         alpha = tf.zeros_like(x) + alpha
-
-    log_z = tf.reduce_sum(gammaln(alpha)) - gammaln(tf.reduce_sum(alpha))
-    log_density = tf.reduce_sum((alpha - 1) * logx) - log_z
+        
+    log_z = tf.reduce_sum(gammaln(alpha), axis=1) - gammaln(tf.reduce_sum(alpha, axis=1))
+    log_density = tf.reduce_sum((alpha - 1) * logx, axis=1) - log_z
     
     return log_density
     
