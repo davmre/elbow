@@ -18,9 +18,26 @@ def extract_shape(t):
         shape = ()
     return shape
 
+def shapes_equal(shape1, shape2):
+    ns1 = np.asarray(shape1)
+    ns2 = np.asarray(shape2)
+
+    try:
+        return (ns1 == ns2).all()
+    except:
+        return False
+
+def shape_is_scalar(shape):
+    ns = np.asarray(shape)
+    return (ns == (1,)).all()
+
 def logsumexp(x1, x2):
     shift = tf.maximum(x1, x2)
     return tf.log(tf.exp(x1 - shift) + tf.exp(x2-shift)) + shift
+
+def reduce_logsumexp(x, **kwargs):
+    shift = tf.reduce_max(x, **kwargs)
+    return tf.log(tf.reduce_sum(tf.exp(x - shift), **kwargs)) + shift
 
 def triangular_inv(L):
     eye = tf.diag(tf.ones_like(tf.diag_part(L)))
