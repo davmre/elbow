@@ -111,9 +111,14 @@ class ConditionalDistribution(object):
         to jointly generate a sample and a stochastic estimate of the entropy.
         By default, however, we just call the methods separately. 
         """
-        sample = self._sample(**kwargs)
-        self._sampled=sample
-        entropy = self._entropy(**kwargs)
+        try:
+            sample = self._sample(**kwargs)
+            self._sampled=sample
+            entropy = self._entropy(**kwargs)
+        except Exception as e:
+            print e
+            return None, None
+        
         return sample, entropy
     
     def sample(self, seed=0):
