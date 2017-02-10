@@ -80,7 +80,7 @@ def unpack_transform(idx, axis=0):
         
     return Unpack
 
-def split_at_row(rv, row_idx):
+def split_at_row(rv, row_idx, name="split"):
     """
     Given an RV representing a matrix, return two RVs representing 
     the initial row_idxs rows and all following rows, respectively.
@@ -90,8 +90,8 @@ def split_at_row(rv, row_idx):
     t1 = slice_transform((0,0), (row_idx, m))
     t2 = slice_transform( (row_idx, 0), (n-row_idx, m))
     
-    rv1 = UnaryTransform(rv, t1)
-    rv2 = UnaryTransform(rv, t2)
+    rv1 = UnaryTransform(rv, t1, name="split_%s_1" % rv.name)
+    rv2 = UnaryTransform(rv, t2, name="split_%s_2" % rv.name)
     return rv1, rv2
 
 def slice_transform(begin, size):
@@ -118,3 +118,44 @@ def slice_transform(begin, size):
 
     return Slice
 
+def reshape_transform(new_shape, old_shape=None):
+    class Reshape(Transform):
+        @classmethod
+        def transform(cls, x, return_log_jac=False):
+            transformed = tf.reshape(x, new_shape)            
+            if return_log_jac:
+                return transformed, 0.0
+            else:
+                return transformed
+
+        @classmethod
+        def output_shape(cls, input_shape):
+            a = np.empty(input_shape)
+            return np.reshape(a, new_shape).shape
+
+        @classmethod
+        def input_shape(cls, output_shape):
+            if old_shape is not None:
+                a = np.empty(output_shape)
+                return np.reshape(a, old_shape).shape
+            else:
+                raise Exception("must pass old_shape explicitly to allow inverse reshape transform")
+
+        @classmethod
+        def inverse(cls, x, return_log_jac=False):
+            if old_shape is None:
+                raise Exception("must pass old_shape explicitly to allow inverse reshape transform")
+
+            transformed = tf.reshape(x, old_shape)            
+            if return_log_jac:
+                return transformed, 0.0
+            else:
+                return transformed
+            
+        @classmethod
+        def is_structural(cls):
+            return True
+
+    return Reshape
+    
+Flatten = reshape_transform(new_shape=(-1,))
