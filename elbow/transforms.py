@@ -53,9 +53,9 @@ class UnaryTransform(DeterministicTransform):
             transformed = {}
             for inp_name, shape in A.input_shapes.items():
                 inp = getattr(A, inp_name)
-                if shape==A.shape:
+                if util.shapes_equal(shape, A.shape):
                     transformed[inp_name] = transform.transform(inp)
-                elif shape==(1,):
+                elif util.shape_is_scalar(shape):
                     transformed[inp_name] = inp
 
             try:
@@ -113,7 +113,12 @@ class TransformedDistribution(ConditionalDistribution):
         # and instantiate the class ourselves with arguments passed into
         # the TransformedDistribution
         if isinstance(dist, type):
-            self.dist = dist(**kwargs)
+            if "shape" in kwargs:
+                inp_shape = transform.input_shape(kwargs["shape"])
+                del kwargs["shape"]
+            else:
+                inp_shape = None
+            self.dist = dist(shape=inp_shape, **kwargs)
         else:
             self.dist = dist
 
@@ -140,6 +145,7 @@ class TransformedDistribution(ConditionalDistribution):
         
     def _sample_and_entropy(self, **kwargs):
         sample, logjac = self.transform.transform(self.dist._sampled, return_log_jac=True)
+        self._sampled_log_jacobian = logjac
         entropy = self.dist._sampled_entropy + logjac
         return sample, entropy
         
@@ -158,7 +164,7 @@ class TransformedDistribution(ConditionalDistribution):
 
     def _logp(self, result, **kwargs):
         inverted, inverse_logjac = self.transform.inverse(result, return_log_jac=True)
-        return self.dist._logp(inverted, **kwargs) - inverse_logjac
+        return self.dist._logp(inverted, **kwargs) + inverse_logjac
         
     def _entropy(self, *args, **kwargs):
         return self.dist._entropy(*args, **kwargs) + self._sampled_log_jacobian
@@ -258,23 +264,110 @@ class Logit(Transform):
         else:
             return x
 
-class Normalize(Transform):
+class RowNormalize(Transform):
 
-    """
-    TODO this was written for vectors only, what are its semantics applied to matrices?
-    """
+    @classmethod
+    def transform(cls, x_positive, return_log_jac=False, **kwargs):
+        try:
+            n, k = util.extract_shape(x_positive)
+            Z = tf.expand_dims(tf.reduce_sum(x_positive, axis=1), axis=1)
+        except ValueError: # x is just a vector
+            k, = util.extract_shape(x_positive)
+            Z = tf.reduce_sum(x_positive)
+            
+        transformed = x_positive / Z
+        if return_log_jac:
+            log_jacobian = -k * tf.reduce_sum(tf.log(Z))
+            return transformed, log_jacobian
+        else:
+            return transformed
+        
+class UnitColumn(Transform):
+
+    @classmethod
+    def transform(cls, x, return_log_jac=False, **kwargs):
+        try:
+            n, k = x.get_shape()
+            ones = tf.ones((n,1))
+            transformed = tf.concat(1, (x, ones))
+        except ValueError:
+            k = x.get_shape()
+            transformed = tf.concat(0, (x, 1))
+        
+        if return_log_jac:
+            return transformed, 0
+        else:
+            return transformed
+
+    @classmethod
+    def output_shape(cls, input_shape):
+        try:
+            n, k = input_shape
+            return (n, k+1)
+        except ValueError:
+            k, = input_shape
+            return (k+1,)
+        
+
+class RowNormalize1(Transform):
+
+    # equivalent to compose(UnitColumn, RowNormalize), but
+    # defined as a single unit so we can specify an inverse
     
     @classmethod
     def transform(cls, x_positive, return_log_jac=False, **kwargs):
-        n = util.extract_shape(x_positive)[0]
-        Z = tf.reduce_sum(x_positive)
-        transformed = x_positive / Z
+        try:
+            n, k = util.extract_shape(x_positive)
+            ones = tf.ones((n,1))
+            expanded = tf.concat(1, (x_positive, ones))
+            Z = tf.expand_dims(tf.reduce_sum(expanded, axis=1), axis=1)
+        except ValueError: # x is just a vector
+            k, = util.extract_shape(x_positive)
+            expanded = tf.concat(0, (x, 1))
+            Z = tf.reduce_sum(expanded)
+            
+        transformed = expanded / Z
         if return_log_jac:
-            log_jacobian = -n * tf.log(Z)
+            log_jacobian = -k * tf.reduce_sum(tf.log(Z))
             return transformed, log_jacobian
         else:
             return transformed
 
+    @classmethod
+    def output_shape(cls, input_shape):
+        try:
+            n, k = input_shape
+            return (n, k+1)
+        except ValueError:
+            k, = input_shape
+            return (k+1,)
+
+        
+    @classmethod
+    def inverse(cls, transformed, return_log_jac=False, **kwargs):
+
+        # first scale to have a unit column
+        cols = tf.unpack(transformed, axis=1)
+        k = len(cols)
+        last_col = cols[-1]
+        x = tf.pack( [col / last_col for col in cols[:-1]], axis=1)
+
+        if return_log_jac:
+            log_jacobian = -(k-1) * tf.reduce_sum(tf.log(last_col))
+            return x, log_jacobian
+        else:
+            return x
+
+    @classmethod
+    def input_shape(cls, output_shape):
+        try:
+            n, k = output_shape
+            return (n, k-1)
+        except ValueError:
+            k, = output_shape
+            return (k-1,)
+
+        
 class Exp(Transform):
 
     @classmethod
@@ -300,6 +393,38 @@ class Exp(Transform):
             return x, log_jacobian
         else:
             return x
+
+
+class Log1Exp(Transform):
+
+    @classmethod
+    def transform(cls, x, return_log_jac=False, clip_finite=True, **kwargs):
+        if clip_finite:
+            x = tf.clip_by_value(x, -88, 88, name="clipped_exp_input")
+
+        # y = log(1 + exp(x))
+        # dy/dx = exp(x) / (1 + exp(x))
+        transformed = tf.log(1 + tf.exp(x))
+        if return_log_jac:
+            log_jacobian = tf.reduce_sum(x - transformed)
+            return transformed, log_jacobian
+        else:
+            return transformed
+
+    @classmethod
+    def inverse(cls, transformed, return_log_jac=False, clip_finite=True, **kwargs):
+        if clip_finite:
+            transformed = tf.clip_by_value(transformed, 1e-45, 1e38, name="clipped_log_input")
+
+        # x = log(exp(y)-1)
+        # dx/dy = exp(y)/(exp(y)-1)
+        x = tf.log(tf.exp(transformed) - 1)
+        if return_log_jac:
+            log_jacobian = tf.reduce_sum(transformed - x)
+            return x, log_jacobian
+        else:
+            return x
+
         
 class Square(Transform):
 
@@ -413,10 +538,19 @@ def chain_transforms(*transforms):
                 return x
 
         @classmethod
-        def inverse(cls, transformed):
+        def inverse(cls, transformed, return_log_jac=False):
+            log_jacs = []
             for transform in transforms[::-1]:
-                transformed = transform.inverse(transform)
-            return transform
+                if return_log_jac:
+                    transformed, lj = transform.inverse(transformed, return_log_jac=return_log_jac)
+                    log_jacs.append(lj)
+                else:
+                    transformed = transform.inverse(transformed, return_log_jac=return_log_jac)
+
+            if return_log_jac:
+                return transformed, tf.reduce_sum(tf.pack(log_jacs))
+            else:
+                return transformed
 
         @classmethod
         def output_shape(cls, input_shape):
@@ -446,13 +580,31 @@ Reciprocal_Sqrt = chain_transforms(Reciprocal, Sqrt)
 Reciprocal_Square = chain_transforms(Reciprocal, Square)
 Exp_Reciprocal = chain_transforms(Exp, Reciprocal)
 
-Simplex_Raw = chain_transforms(Exp, Normalize)
+ColNormalize1 = chain_transforms(Transpose, RowNormalize1, Transpose)
+ColNormalize = chain_transforms(Transpose, RowNormalize, Transpose)
+
+Simplex1 = chain_transforms(Exp, RowNormalize1)
+Simplex1Col = chain_transforms(Exp, ColNormalize1)
+
+Simplex_Raw = chain_transforms(Exp, RowNormalize)
+Simplex_Raw_Col = chain_transforms(Exp, ColNormalize)
+
+
 class Simplex(Transform):
     # result is invariant to shifting the (logspace) input,
     # so we choose a shift to avoid overflow
 
     @classmethod
     def transform(cls, x, **kwargs):
-        xmax = tf.reduce_max(x)
+        xmax = tf.expand_dims(tf.reduce_max(x, axis=1), axis=1)
         return Simplex_Raw.transform(x-xmax, **kwargs)
+
+class SimplexCol(Transform):
+    # result is invariant to shifting the (logspace) input,
+    # so we choose a shift to avoid overflow
+
+    @classmethod
+    def transform(cls, x, **kwargs):
+        xmax = tf.expand_dims(tf.reduce_max(x, axis=0), axis=0)
+        return Simplex_Raw_Col.transform(x-xmax, **kwargs)
 
