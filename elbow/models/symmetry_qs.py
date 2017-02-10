@@ -5,10 +5,11 @@ import elbow.util as util
 
 from elbow.conditional_dist import ConditionalDistribution
 from elbow.parameterization import unconstrained, positive_exp, simplex_constrained, unit_interval
-from elbow.transforms import Logit, Simplex, Exp, TransformedDistribution, Normalize
+from elbow.transforms import Logit, Simplex, Exp, TransformedDistribution
 from elbow.elementary import Gaussian
 
 import scipy.stats
+import itertools
 
 FIX_TRIANGLE, FIX_IDENTITY, FIX_NONE = np.arange(3)
 
@@ -178,6 +179,50 @@ class GaussianMonteCarlo(Gaussian):
         return -self._parameterized_logp(*args, result=self._sampled, **kwargs)
 
 
+class ExplicitPermutationWrapper(ConditionalDistribution):
+
+    def __init__(self, dist, **kwargs):
+
+        if isinstance(dist, type):
+            self.dist = dist(**kwargs)
+        else:
+            self.dist = dist
+        
+        super(ExplicitPermutationWrapper, self).__init__(**kwargs)
+
+    def _setup_inputs(self, **kwargs):
+        self.inputs_random = self.dist.inputs_random
+        self.inputs_nonrandom = self.dist.inputs_nonrandom
+        return {}
+        
+    def _sample(self, **kwargs):
+        return self.dist._sampled
+        
+    def _compute_shape(self, **kwargs):
+        return self.dist.shape
+
+    def _entropy(self, **kwargs):
+        return self.dist._sampled_entropy
+    
+    def _logp(self, result, **kwargs):
+                                        
+        cols = tf.unpack(result, axis=1)
+        lps = []
+        for perm_cols in itertools.permutations(cols):
+            permuted = tf.pack(perm_cols, axis=1)
+            lp_base = self.dist._logp(permuted, **kwargs)
+            lps.append(lp_base)
+            
+        packed_lps = tf.pack(lps)
+
+        self.cols = cols
+        self.packed_lps = packed_lps
+        
+        return util.reduce_logsumexp(packed_lps) - np.log(len(lps))
+            
+    def default_q(self, **kwargs):
+        raise Exception("permutation wrapper is a hack for use only as a Q distribution, but somehow we're putting another Q on it. this is probably not what you want!")
+            
 class ExplicitPermutationMixture(Gaussian):
     
     def __init__(self, deg=10, **kwargs):
@@ -267,3 +312,51 @@ class DiagonalRotationMixture(Gaussian):
         lp = base_logp + lb - tf.trace(cxu)
         
         return lp
+
+class DiagonalRotationMixtureJensen(DiagonalRotationMixture):
+    """
+    posterior approximation for an elementwise matrix Gaussian
+    density symmetrized with respect to the orthogonal group O(n)
+    acting in the column space. Currently assumes covariance is isotropic. 
+
+    Extends DiagonalRotationMixture by implementing a Jensen-based lower
+    bound on the entropy.
+    """    
+
+    def _entropy(self, mean, std, shannon_correction=True, **kwargs):
+
+        if len(std.get_shape()) > 1:
+            # largest singular value of the covariance matrix for each row
+            iso_std = tf.expand_dims(tf.reduce_max(std, axis=1), axis=1)
+        else:
+            iso_std = std
+
+        self.iso_std = iso_std
+        
+        r = mean/iso_std
+        self.r = r
+        
+        A = .5 * tf.matmul(tf.transpose(r), r)
+
+        Z = tf.reduce_sum(1/2.0 * tf.log(4*3.14159
+                                         * tf.ones(self.shape)
+                                         * tf.square(std))) # renyi form
+        self.Z = Z
+        
+        if shannon_correction:
+            # hack: add in the renyi/shannon gap, so the approximation
+            # is exact in the limit mean=0.
+            n,k = self.shape
+            Z += n*k/2.0 * 0.306852819 # (1-log 2) ~= 0.306852819
+
+        svs = tf.sqrt(util.differentiable_sq_singular_vals(A))    
+        lb = lpbessel_svs(svs, k)
+
+        self.svs = svs
+        self.lb = lb
+        
+        entropy_approx = Z + tf.trace(A) - lb
+
+        
+        return entropy_approx
+
