@@ -43,6 +43,9 @@ class Model(object):
         # is useful if we want to observe sample from the joint model. 
         self.variational_nodes = None
 
+        # allow the user to add arbitrary custom terms to the variational bound
+        self.bonus_terms = []
+        
         self.session = None
         self.feeder = None
         self.elbo = None
@@ -69,11 +72,16 @@ class Model(object):
             local_entropies = [n.entropy() for n in vnodes if n.local]
 
             symmetry_correction = tf.reduce_sum(tf.pack([n._hack_symmetry_correction() for n in self.component_nodes]))
+            other_corrections = tf.reduce_sum(tf.pack(self.bonus_terms))
+
             
             self.elp = tf.reduce_sum(tf.pack(global_elps)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(local_elps))
             self.entropy = tf.reduce_sum(tf.pack(global_entropies)) + self.minibatch_ratio * tf.reduce_sum(tf.pack(local_entropies))
 
-            self.elbo = self.elp+self.entropy + symmetry_correction
+            self.elbo = self.elp + \
+                        self.entropy + \
+                        symmetry_correction + \
+                        other_corrections
 
         if return_all:
             return self.elbo, self.elp, self.entropy
@@ -89,10 +97,8 @@ class Model(object):
             n = attached[i]
             networks = n.inference_networks()
             for inp_name, q in networks.items():
-                if inp_name in n.inputs_random:
+                if inp_name in n.inputs_random and n.local:
                     inp_node = n.inputs_random[inp_name]
-                    if not inp_node.local:
-                        print "WARNING: attaching inference network to node %s not marked as local" % (inp_node)
                         
                     try:
                         inp_node.attach_q(q)
@@ -125,7 +131,10 @@ class Model(object):
 
             if not isinstance(n, DeterministicTransform):
                 n.attach_map_q()
-    
+
+    def add_elbo_term(self, term):
+        self.bonus_terms.append(term)
+                
     def elbo_terms(self):
         elps = {n.name: n.expected_logp() for n in self.component_nodes}
         entropies = {n.name: n.entropy() for n in self.get_variational_nodes()}
@@ -138,7 +147,7 @@ class Model(object):
             self.session = tf.Session()
 
             if do_init:
-                init = tf.initialize_all_variables()
+                init = tf.global_variables_initializer()
                 self.session.run(init)
             
         return self.session
@@ -212,7 +221,7 @@ class Model(object):
 
         session = self.get_session(do_init=False)
 
-        init = tf.initialize_all_variables()
+        init = tf.global_variables_initializer()
         session.run(init)
         
         elbo_val = None
@@ -268,7 +277,8 @@ class StepCountStopper(object):
     def observe(self, v):
         self.steps += 1
         if v is not None and not np.isfinite(v):
-            return True
+            raise Exception("stopping after %d steps due to non-finite objective %.2f" % (self.steps, v))
+            
 
         return self.steps > self.step_count
         
