@@ -15,13 +15,15 @@ def layer(inp, w, b):
     else:
         return tf.pack([tf.matmul(inp_slice, w) + b for inp_slice in tf.unpack(inp)])
 
-def init_weights(shape):
-    return tf.Variable(tf.random_normal(shape, stddev=0.01, dtype=tf.float32))
+def init_weights(shape, stddev=0.01):
+    return tf.Variable(tf.random_normal(shape, stddev=stddev, dtype=tf.float32))
 
 def init_zero_vector(shape):
     assert(len(shape)==1)
     n_out = shape[0]
     return tf.Variable(tf.zeros((n_out,), dtype=tf.float32))
+
+init_biases = init_zero_vector
 
 def neural_gaussian(X, d_hidden, d_out, shape=None, name=None, **kwargs):
     augmented_shape = (2,) + shape if shape is not None else None
@@ -34,6 +36,7 @@ def neural_gaussian(X, d_hidden, d_out, shape=None, name=None, **kwargs):
 def neural_bernoulli(X, d_hidden, d_out, shape=None, local=False, name=None, **kwargs):
     encoder = NeuralBernoulliTransform(X, d_hidden, d_out, shape=shape, **kwargs)
     return BernoulliMatrix(p=encoder, shape=shape, local=local, name=name)
+
 
 class NeuralGaussianTransform(DeterministicTransform):
 
