@@ -81,7 +81,7 @@ class ConditionalDistribution(object):
             elif kwargs[input_name] is not None:
                 # if inputs are provided as TF or numpy values, just store that directly
                 v = kwargs[input_name]
-                if isinstance(v, np.ndarray) and v.dtype in (np.int, np.int32, np.int64):
+                if (isinstance(v, np.ndarray) or isinstance(v, tf.Tensor)) and v.dtype in (np.int, np.int32, np.int64):
                     tf_value = tf.convert_to_tensor(v, dtype=tf.int32)
                 else:
                     tf_value = tf.convert_to_tensor(v, dtype=tf.float32)
