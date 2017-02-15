@@ -8,13 +8,20 @@ from elbow.parameterization import unconstrained, positive_exp, simplex_constrai
 
 class NoisyGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std=None, rescale=False, **kwargs):
+    def __init__(self, A, B,
+                 std=None,
+                 rescale=False,
+                 inference_weights=None,
+                 mask=None, **kwargs):
 
         # optionally compute (AB' / K) instead of AB',
         # so that the marginal variance of the result equals
         # the marginal variance of the inputs
         self.rescale = rescale
         self.K = A.shape[1]
+
+        self.mask = mask
+        self.inference_weights = inference_weights
         
         super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std,  **kwargs) 
         
@@ -49,7 +56,13 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         prod = tf.matmul(A, tf.transpose(B))
         if self.rescale:
             prod = prod / np.sqrt(self.K)
-        lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
+            
+        lps = util.dists.gaussian_log_density(result, mean=prod, stddev=std)
+        if self.mask is not None:
+            lp = tf.reduce_sum(lps*self.mask)
+        else:
+            lp = tf.reduce_sum(lps)
+            
         return lp
 
 
@@ -70,9 +83,13 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         expected_result = tf.matmul(mA, tf.transpose(mB))
         if self.rescale:
             expected_result = expected_result / np.sqrt(self.K)
-        
-        gaussian_lp = tf.reduce_sum(util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
 
+        gaussian_lps = util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var)
+        if self.mask is not None:
+            gaussian_lp = tf.reduce_sum(gaussian_lps*self.mask)
+        else:
+            gaussian_lp = tf.reduce_sum(gaussian_lps)
+            
         # can do a more efficient calculation if we assume a uniform (scalar) noise variance across all entries
         #aat_diag = tf.reduce_sum(tf.square(mA), 0)
         #p = tf.reduce_sum(vA, 0)
@@ -83,7 +100,12 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         vAvB = tf.matmul(vA, tf.transpose(vB))
         vAmB = tf.matmul(vA, tf.transpose(tf.square(mB)))
         mAvB = tf.matmul(tf.square(mA), tf.transpose(vB))
-        correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
+
+        if self.mask is not None:
+            correction = tf.reduce_sum( (vAvB + vAmB + mAvB)*self.mask / var)
+        else:
+            correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
+            
         if self.rescale:
             # rescaling the result is equivalent to rescaling each input by K^{-1/4},
             # which scales the variances (and squared means) by 1/sqrt(K).
@@ -117,27 +139,43 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         signflip_correction = self.K * np.log(2)
         return permutation_correction + signflip_correction
 
-    def _inference_networks(self, q_result):        
-        from pca import MeanFieldLinearGaussian
-        q_A = MeanFieldLinearGaussian(X=q_result, mu=0.,
-                                      shape=self.input_shapes["A"],
-                                      name="q_A")
-        return {"A": q_A}
+    def _inference_networks(self, q_result):
+
+        batch_users, n_traits = self.input_shapes["A"]
+        n_items, n_traits2 = self.input_shapes["B"]
+        assert(n_traits == n_traits2)
         
+        observed_ratings = q_result._sampled
+        mask = self.mask
+        means, stds, weights = build_trait_network(observed_ratings,
+                                                   mask,
+                                                   n_traits=n_traits,
+                                                   weights = self.inference_weights)
+        self.inference_weights = weights
+
+        q_A = Gaussian(mean=means, std=stds, shape=(batch_users, n_traits), name="q_neural_" + self.name)
+        
+        return {"A": q_A}
+
+    
 class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
     
-    def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, rescale=False, **kwargs):
+    def __init__(self, A, B, std=None, row_idxs=None, col_idxs=None, batch_mask=None, rescale=False, **kwargs):
 
         # optionally compute (AB' / K) instead of AB',
         # so that the marginal variance of the result equals
         # the marginal variance of the inputs
         self.rescale = rescale
         self.K = A.shape[1]
-        
-        super(NoisySparseGaussianMatrixProduct, self).__init__(A=A, B=B, std=std, row_idxs=row_idxs, col_idxs=col_idxs, **kwargs) 
+
+        if batch_mask is None:
+            # default to the trivial mask
+            batch_mask = np.ones(row_idxs.shape, dtype=np.float32)
+
+        super(NoisySparseGaussianMatrixProduct, self).__init__(A=A, B=B, std=std, row_idxs=row_idxs, col_idxs=col_idxs, batch_mask=batch_mask, **kwargs) 
         
     def inputs(self):
-        return {"A": unconstrained, "B": unconstrained, "std": positive_exp, "row_idxs": None, "col_idxs": None}
+        return {"A": unconstrained, "B": unconstrained, "std": positive_exp, "row_idxs": None, "col_idxs": None, "batch_mask": None}
 
     def derived_parameters(self, A, B, std, row_idxs, col_idxs, **kwargs):
         derived = {}
@@ -152,17 +190,19 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
         derived["variance"] = std**2
         return derived
     
-    def _compute_shape(self, A_shape, B_shape, std_shape, row_idxs_shape, col_idxs_shape):
+    def _compute_shape(self, A_shape, B_shape, std_shape, row_idxs_shape, col_idxs_shape, batch_mask_shape):
         N, K = A_shape
         M, K2 = B_shape
         assert(K == K2)
 
         (nidxs,) = row_idxs_shape
         (nidxs2,) = col_idxs_shape
+        (nidxs3,) = batch_mask_shape
         assert( nidxs == nidxs2)
+        assert( nidxs == nidxs3)
         return (nidxs,)
     
-    def _sample(self, A, B, std, row_idxs, col_idxs):
+    def _sample(self, A, B, std, row_idxs, col_idxs, batch_mask):
         eps = tf.random_normal(shape=self.shape, dtype=self.dtype)
 
         Aidx = tf.gather(A, row_idxs)
@@ -174,21 +214,24 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
 
         return eps * std + prod
 
-    def _logp(self, result, A, B, std, row_idxs, col_idxs):
+    def _logp(self, result, A, B, std, row_idxs, col_idxs, batch_mask):
 
         Aidx = tf.gather(A, row_idxs)
         Bidx = tf.gather(B, col_idxs)
         prod = tf.reduce_sum(Aidx * Bidx, 1)
         if self.rescale:
             prod = prod / np.sqrt(self.K)
-        lp = tf.reduce_sum(util.dists.gaussian_log_density(result, mean=prod, stddev=std))
+
+        lps = util.dists.gaussian_log_density(result, mean=prod, stddev=std)
+        lp = tf.reduce_sum(lps * batch_mask)
         return lp
 
-    def _expected_logp(self, q_result, q_A=None, q_B=None, q_std=None, q_row_idxs=None, q_col_idxs=None):
+    def _expected_logp(self, q_result, q_A=None, q_B=None, q_std=None, q_row_idxs=None, q_col_idxs=None, q_batch_mask=None):
 
         std = q_std._sampled if q_std is not None else self.inputs_nonrandom['std']
         row_idxs = q_row_idxs._sampled if q_row_idxs is not None else self.inputs_nonrandom['row_idxs']
         col_idxs = q_col_idxs._sampled if q_col_idxs is not None else self.inputs_nonrandom['col_idxs']
+        batch_mask = q_batch_mask._sampled if q_batch_mask is not None else self.inputs_nonrandom['batch_mask']
 
         try:
             var = q_result.variance + tf.square(std)
@@ -199,18 +242,19 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
             print "devolving to stochastic logp", e
             A = q_A._sampled if q_A is not None else self.inputs_nonrandom['A']
             B = q_B._sampled if q_B is not None else self.inputs_nonrandom['B']
-            return self._logp(result=q_result._sampled, A=A, B=B, std=std, row_idxs=row_idxs, col_idxs=col_idxs)
+            return self._logp(result=q_result._sampled, A=A, B=B, std=std, row_idxs=row_idxs, col_idxs=col_idxs, batch_mask=batch_mask)
             
         expected_result = tf.reduce_sum(mA * mB, 1)
         if self.rescale:
             expected_result = expected_result / np.sqrt(self.K)
-        
-        gaussian_lp = tf.reduce_sum(util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var))
+
+        gaussian_lps = util.dists.gaussian_log_density(q_result.mean, expected_result, variance=var)
+        gaussian_lp = tf.reduce_sum(gaussian_lps * batch_mask)
 
         vAvB = tf.reduce_sum(vA * vB, 1)
         vAmB = tf.reduce_sum(vA * tf.square(mB), 1)
         mAvB = tf.reduce_sum(tf.square(mA) * vB, 1)
-        correction = tf.reduce_sum( (vAvB + vAmB + mAvB) / var)
+        correction = tf.reduce_sum( (vAvB + vAmB + mAvB) * batch_mask / var)
         if self.rescale:
             # rescaling the result is equivalent to rescaling each input by 1/sqrt(K),
             # which scales the variances (and squared means) by 1/K.
@@ -226,6 +270,90 @@ class NoisySparseGaussianMatrixProduct(ConditionalDistribution):
         permutation_correction = np.sum(np.log(np.arange(1, self.K+1))) # log K!
         signflip_correction = self.K * np.log(2)
         return permutation_correction + signflip_correction
+
+class BatchDenseGeneratorByUser(object):
+
+    def __init__(self, user_rows, n_items,
+                 batch_size_users,
+                 shuffle=True):
+        self.user_rows = user_rows
+        self.n_items = n_items
+        self.batch_size_users = batch_size_users
+        
+        self.n_users = len(user_rows)
+        self.idx = 0
+
+        self.batch_mask = np.zeros((batch_size_users,n_items), dtype=np.float32)
+        self.ratings = np.zeros((batch_size_users,n_items), dtype=np.float32)
+
+        self.shuffled_rows = user_rows
+        self.shuffle = shuffle
+        self.flag_reshuffle = shuffle
+        
+    def next_batch(self):        
+        if self.flag_reshuffle:
+            self.shuffled_rows = [self.user_rows[i] for i in \
+                                  np.random.permutation(self.n_users)]
+            self.idx = 0
+            self.flag_reshuffle = False
+            
+        self.ratings[:,:] = 0
+        self.batch_mask[:,:] = 0
+        for relative_uid in range(self.batch_size_users):
+            current_idx = (self.idx + relative_uid) % self.n_users
+            mids_user, ratings_user = self.shuffled_rows[current_idx]
+            
+            self.ratings[relative_uid, mids_user] = ratings_user
+            self.batch_mask[relative_uid, mids_user] = 1
+
+            
+        current_idx = self.idx + self.batch_size_users
+        if current_idx > self.n_users:
+            self.flag_reshuffle = self.shuffle
+        self.idx = current_idx % self.n_users
+            
+        return self.ratings, self.batch_mask
+    
+def build_trait_network(sparse_ratings, mask, n_traits, weights=None):
+    # docs is a TF variable with shape n_docs, n_words
+
+    batch_users, n_inputs = util.extract_shape(sparse_ratings)
+    n_hidden1 = n_traits*4
+    n_hidden2 = n_traits*2
+
+    from elbow.models.neural import layer, init_weights, init_biases
+
+    if weights is None:
+        weights = {}
+        weights["W1"] = init_weights((n_inputs, n_hidden1), stddev=1e-4)
+        weights["b1"] = init_biases((n_hidden1,))
+        weights["Wmask"] = init_weights((n_inputs, n_hidden1), stddev=1e-4)
+        weights["bmask"] = init_biases((n_hidden1,))
+
+        weights["W2"] = init_weights((n_hidden1, n_hidden2), stddev=1e-4)
+        weights["b2"] = init_biases((n_hidden2,))
+
+        weights["W_means"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
+        weights["b_means"] = init_biases((n_traits,))
+        weights["W_stds"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
+        weights["b_stds"] = init_biases((n_traits,))
+
+    def build_network(W1, Wmask, W2, b1, bmask, b2, W_means, b_means, W_stds, b_stds):
+
+        def sparse_layer(inp, w, b):
+            return tf.matmul(inp, w, a_is_sparse=True) + b
+
+        h1base = sparse_layer(sparse_ratings, W1, b1)
+        h1mask = sparse_layer(mask, Wmask, bmask)
+        h1 = tf.nn.relu(h1base + h1mask)
+        h2 = tf.nn.relu(layer(h1, W2, b2))
+        means = layer(h2, W_means, b_means)
+        stds = tf.log(1 + tf.exp(layer(h2, W_stds, b_stds)))
+        return means, stds
+    
+    means, stds = build_network(**weights)
+    
+    return means, stds, weights
     
 class NoisyCumulativeSum(ConditionalDistribution):
     
