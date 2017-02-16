@@ -284,7 +284,16 @@ def lpbessel_svs(xs, n):
     log_num = tf.reduce_sum(xs*ys + n/2.0 * tf.log((1-y2)))
     return log_num - log_denom
 
-class DiagonalRotationMixture(Gaussian):
+
+class LargeInitGaussian(Gaussian):
+
+    def inputs(self):
+        pe = lambda shape=None, name=None : positive_exp(shape=shape, name=name, init_log=np.float32(np.ones(shape) * -2.))
+        
+        return {"mean": unconstrained, "std": pe}
+
+
+class DiagonalRotationMixture(LargeInitGaussian):
     """
     posterior approximation for an elementwise matrix Gaussian
     density symmetrized with respect to the orthogonal group O(n)
@@ -312,7 +321,7 @@ class DiagonalRotationMixture(Gaussian):
         lp = base_logp + lb - tf.trace(cxu)
         
         return lp
-
+    
 class DiagonalRotationMixtureJensen(DiagonalRotationMixture):
     """
     posterior approximation for an elementwise matrix Gaussian
@@ -322,22 +331,10 @@ class DiagonalRotationMixtureJensen(DiagonalRotationMixture):
     Extends DiagonalRotationMixture by implementing a Jensen-based lower
     bound on the entropy.
     """    
-
+    
     def _entropy(self, mean, std, shannon_correction=True, **kwargs):
-
-        if len(std.get_shape()) > 1:
-            # largest singular value of the covariance matrix for each row
-            iso_std = tf.expand_dims(tf.reduce_max(std, axis=1), axis=1)
-        else:
-            iso_std = std
-
-        self.iso_std = iso_std
+        n,k = self.shape
         
-        r = mean/iso_std
-        self.r = r
-        
-        A = .5 * tf.matmul(tf.transpose(r), r)
-
         Z = tf.reduce_sum(1/2.0 * tf.log(4*3.14159
                                          * tf.ones(self.shape)
                                          * tf.square(std))) # renyi form
@@ -346,17 +343,24 @@ class DiagonalRotationMixtureJensen(DiagonalRotationMixture):
         if shannon_correction:
             # hack: add in the renyi/shannon gap, so the approximation
             # is exact in the limit mean=0.
-            n,k = self.shape
             Z += n*k/2.0 * 0.306852819 # (1-log 2) ~= 0.306852819
 
-        svs = tf.sqrt(util.differentiable_sq_singular_vals(A))    
-        lb = lpbessel_svs(svs, k)
+        return Z + general_orthog_correction(mean, std, k)
 
-        self.svs = svs
-        self.lb = lb
-        
-        entropy_approx = Z + tf.trace(A) - lb
+def general_orthog_correction(mean, std, k):
 
-        
-        return entropy_approx
+    std = tf.clip_by_value(std, 1e-3, np.inf)
+    
+    if len(std.get_shape()) > 1:
+        # largest singular value of the covariance matrix for each row
+        iso_std = tf.expand_dims(tf.reduce_max(std, axis=1), axis=1)
+    else:
+        iso_std = std
 
+    r = mean/iso_std        
+    A = .5 * tf.matmul(tf.transpose(r), r)
+
+    svs = tf.sqrt(util.differentiable_sq_singular_vals(A))    
+    lb = lpbessel_svs(svs, k)
+
+    return tf.trace(A) - lb
