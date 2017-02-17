@@ -347,9 +347,9 @@ class DiagonalRotationMixtureJensen(DiagonalRotationMixture):
 
         return Z + general_orthog_correction(mean, std, k)
 
-def general_orthog_correction(mean, std, k):
-
-    std = tf.clip_by_value(std, 1e-3, np.inf)
+def general_orthog_correction(mean, std, k, scale_svs=None):    
+    
+    std = tf.clip_by_value(std, 1e-2, np.inf)
     
     if len(std.get_shape()) > 1:
         # largest singular value of the covariance matrix for each row
@@ -360,7 +360,12 @@ def general_orthog_correction(mean, std, k):
     r = mean/iso_std        
     A = .5 * tf.matmul(tf.transpose(r), r)
 
-    svs = tf.sqrt(util.differentiable_sq_singular_vals(A))    
+    tr = tf.trace(A)
+    svs = tf.sqrt(util.differentiable_sq_singular_vals(A))
+    if scale_svs is not None:
+        svs *= scale_svs
+        tr *= scale_svs
+        
     lb = lpbessel_svs(svs, k)
-
-    return tf.trace(A) - lb
+    
+    return tr - lb
