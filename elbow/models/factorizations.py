@@ -12,6 +12,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
                  std=None,
                  rescale=False,
                  inference_weights=None,
+                 scale_logp=1,
                  mask=None, **kwargs):
 
         # optionally compute (AB' / K) instead of AB',
@@ -21,6 +22,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         self.K = A.shape[1]
 
         self.mask = mask
+        self.scale_logp = scale_logp
         self.inference_weights = inference_weights
         
         super(NoisyGaussianMatrixProduct, self).__init__(A=A, B=B, std=std,  **kwargs) 
@@ -63,7 +65,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         else:
             lp = tf.reduce_sum(lps)
             
-        return lp
+        return lp * self.scale_logp
 
 
     def _expected_logp(self, q_result, q_A=None, q_B=None, q_std=None):
@@ -114,7 +116,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
         
         expected_lp = gaussian_lp - .5 * correction
         
-        return expected_lp
+        return expected_lp * self.scale_logp
 
 
     def default_q(self):
@@ -153,7 +155,7 @@ class NoisyGaussianMatrixProduct(ConditionalDistribution):
                                                    weights = self.inference_weights)
         self.inference_weights = weights
 
-        q_A = Gaussian(mean=means, std=stds, shape=(batch_users, n_traits), name="q_neural_" + self.name)
+        q_A = Gaussian(mean=means, std=stds, shape=(batch_users, n_traits), name="q_neural_" + self.inputs_random["A"].name)
         
         return {"A": q_A}
 
@@ -321,7 +323,7 @@ def build_trait_network(sparse_ratings, mask, n_traits, weights=None):
     n_hidden1 = n_traits*4
     n_hidden2 = n_traits*2
 
-    from elbow.models.neural import layer, init_weights, init_biases
+    from elbow.models.neural import layer, init_weights, init_biases, init_const
 
     if weights is None:
         weights = {}
@@ -336,7 +338,7 @@ def build_trait_network(sparse_ratings, mask, n_traits, weights=None):
         weights["W_means"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
         weights["b_means"] = init_biases((n_traits,))
         weights["W_stds"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
-        weights["b_stds"] = init_biases((n_traits,))
+        weights["b_stds"] = init_const((n_traits,), val=-10)
 
     def build_network(W1, Wmask, W2, b1, bmask, b2, W_means, b_means, W_stds, b_stds):
 
@@ -349,6 +351,8 @@ def build_trait_network(sparse_ratings, mask, n_traits, weights=None):
         h2 = tf.nn.relu(layer(h1, W2, b2))
         means = layer(h2, W_means, b_means)
         stds = tf.log(1 + tf.exp(layer(h2, W_stds, b_stds)))
+        stds = tf.clip_by_value(stds, 1e-8, 100)
+        means = tf.clip_by_value(means, -100, 100)
         return means, stds
     
     means, stds = build_network(**weights)
