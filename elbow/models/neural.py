@@ -18,6 +18,10 @@ def layer(inp, w, b):
 def init_weights(shape, stddev=0.01):
     return tf.Variable(tf.random_normal(shape, stddev=stddev, dtype=tf.float32))
 
+def init_const(shape, val=1.):
+    return tf.Variable(tf.ones(shape, dtype=tf.float32)*val)
+
+
 def init_zero_vector(shape):
     assert(len(shape)==1)
     n_out = shape[0]

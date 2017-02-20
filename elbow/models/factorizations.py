@@ -318,37 +318,49 @@ def build_trait_network(sparse_ratings, mask, n_traits, weights=None):
     # docs is a TF variable with shape n_docs, n_words
 
     batch_users, n_inputs = util.extract_shape(sparse_ratings)
-    n_hidden1 = n_traits*4
+    n_hidden1 = n_traits*3
     n_hidden2 = n_traits*2
-
-    from elbow.models.neural import layer, init_weights, init_biases
+    
+    from elbow.models.neural import layer, init_weights, init_biases, init_const
 
     if weights is None:
         weights = {}
         weights["W1"] = init_weights((n_inputs, n_hidden1), stddev=1e-4)
         weights["b1"] = init_biases((n_hidden1,))
+        
         weights["Wmask"] = init_weights((n_inputs, n_hidden1), stddev=1e-4)
         weights["bmask"] = init_biases((n_hidden1,))
+        weights["Wmask2"] = init_weights((n_hidden1, n_hidden2), stddev=1e-4)
+        weights["bmask2"] = init_biases((n_hidden2,))
 
         weights["W2"] = init_weights((n_hidden1, n_hidden2), stddev=1e-4)
         weights["b2"] = init_biases((n_hidden2,))
 
         weights["W_means"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
         weights["b_means"] = init_biases((n_traits,))
-        weights["W_stds"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
-        weights["b_stds"] = init_biases((n_traits,))
 
-    def build_network(W1, Wmask, W2, b1, bmask, b2, W_means, b_means, W_stds, b_stds):
+        #weights["W_stds"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
+        #weights["b_stds"] = init_const((n_traits,), val=-5)
+
+        weights["W_stds"] = init_weights((n_hidden2, n_traits), stddev=1e-4)
+        weights["b_stds"] = init_const((n_traits,), val=-2)
+        
+    def build_network(W1, Wmask, W2, b1, bmask, b2,
+                      W_means, b_means, W_stds, b_stds,
+                      Wmask2, bmask2):
 
         def sparse_layer(inp, w, b):
             return tf.matmul(inp, w, a_is_sparse=True) + b
 
         h1base = sparse_layer(sparse_ratings, W1, b1)
-        h1mask = sparse_layer(mask, Wmask, bmask)
-        h1 = tf.nn.relu(h1base + h1mask)
-        h2 = tf.nn.relu(layer(h1, W2, b2))
+        #h1 = tf.nn.relu(h1base + h1mask)
+        h1 = tf.nn.elu(h1base)
+        h2 = tf.nn.elu(layer(h1, W2, b2))        
         means = layer(h2, W_means, b_means)
-        stds = tf.log(1 + tf.exp(layer(h2, W_stds, b_stds)))
+
+        h1mask = sparse_layer(mask, Wmask, bmask)
+        h2mask = tf.nn.elu(layer(h1mask, Wmask2, bmask2))
+        stds = tf.nn.softplus(layer(h2mask, W_stds, b_stds))
         return means, stds
     
     means, stds = build_network(**weights)
